@@ -94,14 +94,14 @@ dcl-proc main;
 	
 
 	url = getServerVar('REQUEST_FULL_PATH');
-	environment = word (url:1:'/');
+	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
 	procName    = word (url:3:'/');
 
 	if  schemaName = 'openapi-meta';
 		serveListSchemaProcs (environment : sesGetvar ('schemaName'));
 	elseif schemaName = 'static_resources' or procName = ''; 
-		serveStatic (schemaName : url);
+		serveStatic (environment : schemaName : url);
 	else;
 		serveProcedureResponse (environment : schemaName : procName);
 	endif; 
@@ -112,6 +112,7 @@ end-proc;
 dcl-proc serveStatic;
 
 	dcl-pi *n;
+		environment varchar(32);
 		schemaName varchar(32);
 		url varchar(256);
 	end-pi;
@@ -119,17 +120,28 @@ dcl-proc serveStatic;
 	dcl-s i	int(10);
 	dcl-s fileName varchar(256); 
 	dcl-s staticPath   varchar(256); 
+	dcl-s pResponse	pointer;
+
+	if schemaName = '';
+		pResponse =  FormatError (
+			'No schema name is provided (second url parameter)'
+		);
+		SetContentType ('application/json');
+		responseWriteJson(pResponse);
+		json_delete(pResponse);
+		return;
+	endif;
 	
-	staticPath  = getServerVar('SERVER_ROOT_PATH') + '/static';
+	staticPath  = strLower(getServerVar('SERVER_ROOT_PATH') + '/static');
 
-	i = %scan (schemaName : url );
-	i += %len(schemaName);
+	// count the slashes ( aka the +2 )
+	fileName = %subst (url : 2 + %len(environment) + %len(schemaName) );
 
-	if i >= %len(url);
+	if  %len(fileName) <= 1;
 		sesSetVar  ('schemaName':schemaName);
 		fileName = staticPath + '/index.html'; 
 	else;		
-		fileName = staticPath  + %subst (url : i); 
+		fileName = staticPath  + '/' + fileName; 
 	endif;
 
 	SetCharset ('charset=utf-8');
@@ -158,61 +170,18 @@ dcl-proc serveProcedureResponse ;
 		);
 	endif;
 	
-	if json_getStr(pResponse : 'description') <> 'HTML';
-		responseWriteJson(pResponse);
-		if json_getstr(pResponse : 'success') = 'false';
-			msg = json_getstr(pResponse: 'message');
-			if msg = '';
-				msg = json_getstr(pResponse: 'msg');
-			endif;
-			setStatus ('500 ' + msg);
-			consoleLogjson(pResponse);
+	responseWriteJson(pResponse);
+	if json_getstr(pResponse : 'success') = 'false';
+		msg = json_getstr(pResponse: 'message');
+		if msg = '';
+			msg = json_getstr(pResponse: 'msg');
 		endif;
+		setStatus ('500 ' + msg);
+		consoleLogjson(pResponse);
 	endif;
 	json_delete(pResponse);
 
 end-proc;
-/* -------------------------------------------------------------------- *\  
-   get data form request
-\* -------------------------------------------------------------------- */
-/**********
-dcl-proc unpackParms;
-
-	dcl-pi *n pointer;
-	end-pi;
-
-	dcl-s pPayload 		pointer;
-	dcl-s msg     		varchar(4096);
-	dcl-s callback     	varchar(512);
-
-
-	SetContentType('application/json; charset=utf-8');
-	SetEncodingType('*JSON');
-	json_setDelimiters('/\@[] ');
-	json_sqlSetOptions('{'             + // use dfault connection
-		'upperCaseColname: false,   '  + // set option for uppcase of columns names
-		'autoParseContent: true,    '  + // auto parse columns predicted to have JSON or XML contents
-		'sqlNaming       : false    '  + // use the SQL naming for database.table  or database/table
-	'}');
-
-	callback = reqStr('callback');
-	if (callback>'');
-		responseWrite (callback + '(');
-	endif;
-
-	if reqStr('payload') > '';
-		pPayload = json_ParseString(reqStr('payload'));
-	elseif getServerVar('REQUEST_METHOD') = 'POST';
-		pPayload = json_ParseRequest();
-	else;
-		pPayload = *NULL;
-	endif;
-
-	return pPayload;
-
-
-end-proc;
-*****/ 
 /* -------------------------------------------------------------------- *\ 
    	run a a microservice call
 \* -------------------------------------------------------------------- */
@@ -243,24 +212,25 @@ dcl-proc runService export;
 
 	pPayload = json_ParseRequest();
 
-	// Build parameter from posted payload:
-	iterParms = json_SetIterator(pPayload);
-	dow json_ForEach(iterParms);
-		strAppend (parmlist : ',' : camelToSnakeCase(json_getName(iterParms.this)) + '=>' + strQuot(json_getValue(iterParms.this)));
-  	enddo;
 
-	/* 
-	// Or if parametres are given atr the URL
-	getQryStrList ( name : value : '*FIRST');
-	dow name > '';
-		strAppend (parmlist : ',' : name + '=>' + strQuot(value));
-		getQryStrList ( name : value : '*NEXT');
-	enddo;    
-	*/ 
 
-	sqlStmt = 'call ' + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + ')';
+	if getServerVar('REQUEST_METHOD') = 'GET';
+		// Or if parametres are given atr the URL
+		getQryStrList ( name : value : '*FIRST');
+		dow name > '';
+			strAppend (parmlist : ',' : name + '=>' + strQuot(value));
+			getQryStrList ( name : value : '*NEXT');
+		enddo;    
+		sqlStmt = 'values ' + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + ')';
+	else;
+		// Build parameter from posted payload:
+		iterParms = json_SetIterator(pPayload);
+		dow json_ForEach(iterParms);
+			strAppend (parmlist : ',' : camelToSnakeCase(json_getName(iterParms.this)) + '=>' + strQuot(json_getStr (iterParms.this)));
+		enddo;
+		sqlStmt = 'call ' + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + ')';
+	endif;
 
-	
 	pResponse = json_sqlResultSet(
         sqlStmt: // The sql statement,
         1:  // from row,
@@ -330,64 +300,113 @@ dcl-proc serveListSchemaProcs;
 
 	dcl-s pResult   pointer; 
 	dcl-s pSwagger  pointer; 
+	dcl-s pRoutineTree pointer;
 	
 	dcl-ds iterList  	likeds(json_iterator);
 	dcl-s  prevSchema   	varchar(32);
 	dcl-s  prevRoutine 		varchar(32);
  
 
-
 	pResult = json_sqlResultSet (`
-		Select a.routine_schema , a.routine_name, a.long_comment as desc, b.*
-		from sysprocs a
+		Select a.routine_type, a.routine_schema , a.routine_name, a.long_comment as desc, a.max_dynamic_result_sets , b.*
+		from sysroutines a
 		left join  sysparms b 
 		on a.specific_schema = b.specific_schema and a.specific_name = b.specific_name 
-		where a.routine_schema in ( ${strQuot(schemaName)}) 
-		and   a.result_sets = 1 
-		and   a.out_parms = 0 ;
+		where a.routine_schema = upper(${strQuot(schemaName)}) 
+		and (a.routine_type , a.specific_name)  in ( 
+           select routine_type , min(a.specific_name) 
+           from sysroutines  a
+		   where a.routine_schema = upper(${strQuot(schemaName)})
+           group by routine_type , a.routine_name
+       );
+
 	`);
 
+	pRoutineTree = reorderResultAsTree (pResult);
+	pSwagger = buildSwaggerJson (environment : pRoutineTree);
+
 	SetContentType ('application/json');
-	pSwagger = buildSwaggerJson (environment : pResult);
 	responseWriteJson(pSwagger);
 
+	json_delete (pRoutineTree);
 	json_delete (pResult);
 	json_delete (pSwagger);
 
+
 end-proc;
+// --------------------------------------------------------------------  
+dcl-proc reorderResultAsTree; 
+
+	dcl-pi *n pointer;
+		pRoutines  pointer value;
+	end-pi;
+
+	dcl-ds iterList  likeds(json_iterator);  
+	dcl-s  pTree     pointer;
+	dcl-s  pRoutine  pointer;
+	dcl-s  pParms    pointer;
+	dcl-s  Schema    varchar(32);
+	dcl-s  Routine 	 varchar(128);
+	dcl-s prevSchemaRoutine varchar(256);
+	dcl-s schemaRoutine varchar(256);
+
+	pTree  = json_newArray ();
+
+	// One item for each routine;
+	iterList = json_setIterator(pRoutines);  
+	dow json_ForEach(iterList) ;  
+
+		schema =  snakeToCamelCase (json_getStr (iterList.this:'routine_schema'));
+		routine = snakeToCamelCase (json_getStr (iterList.this:'routine_name')); 
+		SchemaRoutine =  schema + '/' + routine;
+
+		if  schemaRoutine <> prevSchemaRoutine;
+			prevSchemaRoutine = SchemaRoutine;
+			pRoutine = json_newObject();
+			json_setStr  (pRoutine : 'schema' :schema );
+			json_setStr  (pRoutine : 'routine':routine );
+			json_setBool (pRoutine : 'isfunction'  : json_getStr(iterList.this: 'routine_type' ) = 'FUNCTION');
+			json_setStr  (pRoutine : 'description': json_getStr(iterList.this: 'desc')) ;
+			json_setInt  (pRoutine : 'result_sets': json_getInt(iterList.this: 'max_dynamic_result_sets'));
+			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
+			json_arrayPush(pTree : pRoutine);
+		endif;
+		json_arrayPush(pParms : iterList.this: JSON_COPY_CLONE);
+	enddo;
+
+	return pTree;
+
+
+end-proc;
+
 // --------------------------------------------------------------------  
 dcl-proc buildSwaggerJson;
 
 	dcl-pi *n pointer;
 		environment varchar(32) const options(*varsize);
-		pRoutes pointer value;
+		pRoutines pointer value;
 	end-pi;
 
-	dcl-ds iterList likeds(json_iterator);  
-	dcl-s pOpenApi  pointer;
-	dcl-s pRoute 	pointer;
-	dcl-s pPaths  	pointer;
-	dcl-s pParms  	pointer;
-	dcl-s pParm   	pointer;
-	dcl-s pMethod 	pointer;
-	dcl-s pComponents pointer;
-	dcl-s pSchemas   pointer;
-	dcl-s pProperty pointer;
-	dcl-s method 	int(10);
-	dcl-s null  	int(10);
-	dcl-s path 		varchar(256);
-	dcl-s text 		varchar(256);
-	dcl-s ref   	varchar(10) inz('$ref');
-	dcl-s prevSchemaRoutine varchar(256);
-	dcl-s schemaRoutine varchar(256);
-	
-	dcl-s i 		int(5);
-
-	dcl-s  Schema   	varchar(32);
-	dcl-s  Routine 		varchar(32);
-
-
-	/// SetContentType ('application/json');
+	dcl-ds iterList   	likeds(json_iterator);  
+	dcl-ds iterParms  	likeds(json_iterator);  
+	dcl-s pOpenApi  	pointer;
+	dcl-s pRoute 		pointer;
+	dcl-s pPaths  		pointer;
+	dcl-s pParms  		pointer;
+	dcl-s pParm   		pointer;
+	dcl-s pMethod 		pointer;
+	dcl-s pComponents 	pointer;
+	dcl-s pSchemas   	pointer;
+	dcl-s pPropertyInput pointer;
+	dcl-s pPropertyOutput pointer;
+	dcl-s pParameters 	pointer;
+	dcl-s pParmsInput 	pointer;
+	dcl-s pParmsOutput 	pointer;	
+	dcl-s ref   		varchar(10) inz('$ref');
+	dcl-s Schema   		varchar(32);
+	dcl-s Routine 		varchar(32);
+	dcl-s resultSets    int(5);
+	dcl-s OutputReference varchar(64);
 
 	pOpenApi = json_parseString(`{
 		"openapi": "3.0.1",
@@ -404,86 +423,130 @@ dcl-proc buildSwaggerJson;
 	}`);
 
 
-	// pOpenApi = json_parsefile ('static/openapi-template.json');
-	pPaths = json_locate( pOpenApi : 'paths');
-	if pPaths = *null;
-		pPaths = json_moveobjectinto  ( pOpenApi  :  'paths' : json_newObject() ); 
-	endif;
+	pPaths      = json_moveobjectinto  ( pOpenApi    : 'paths'      : json_newObject() ); 
+	pComponents = json_moveobjectinto  ( pOpenApi    : 'components' : json_newObject()); 
+	pSchemas    = json_moveobjectinto  ( pComponents : 'schemas'    : json_newObject()); 
 
-	pComponents = json_moveobjectinto  ( pOpenApi     :  'components' : json_newObject()); 
-	pSchemas    = json_moveobjectinto  ( pComponents  :  'schemas' : json_newObject()); 
-
-	// Now produce the menu JSON 
-	iterList = json_setIterator(pRoutes);  
+	// Now produce the openAPI JSON fro each routine 
+	iterList = json_setIterator(pRoutines);  
 	dow json_ForEach(iterList) ;  
 
-		Schema =  snakeToCamelCase (json_getValue(iterList.this:'routine_schema'));
-		Routine = snakeToCamelCase (json_getValue(iterList.this:'routine_name')); 
-		SchemaRoutine =  Schema + '/' + Routine;
+		schema =  json_getStr(iterList.this:'schema');
+		routine = json_getStr(iterList.this:'routine'); 
 
-		if  SchemaRoutine <> prevSchemaRoutine;
-			prevSchemaRoutine = SchemaRoutine;
-			pRoute = json_newObject();
-			json_noderename (pRoute : '/' + environment + '/' + SchemaRoutine);
-			pMethod = json_parseString(
-			`{
-				"tags": [
-					"${Routine}"
-				],
-				"operationId": 	"${environment}",
-				"summary": "${Routine}",
-				"requestBody": {
+		resultSets  = json_getInt(iterList.this:'result_sets');
+		if resultSets >= 1;
+			OutputReference = '"$ref":"#/definitions/ApiResponse"';
+		else;
+			OutputReference = '"$ref":"#/components/schemas/' + routine + 'Output"';	
+		endif; 
+
+		pRoute = json_newObject();
+		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine);
+		pMethod = json_parseString(
+		`{
+			"tags": [
+				"${routine}"
+			],
+			"operationId": "${environment}",
+			"summary": "${  json_getStr(iterList.this:'description') }",
+			"requestBody": {
+				"content": {
+					"application/json": {
+						"schema": {
+							"${ref}": "#/components/schemas/${routine}Input"
+						}
+					}
+				},
+				"required": true
+			},
+			"responses": {
+				"200": {
+					"description": "OK",
 					"content": {
 						"application/json": {
 							"schema": {
-								"${ref}": "#/components/schemas/${Routine}"
+								${OutputReference}
 							}
 						}
-					},
-					"required": true
-				},
-				"responses": {
-					"200": {
-						"description": "OK",
-						"content": {
-							"application/json": {
-								"schema": {
-									"${ref}": "#/definitions/ApiResponse"
-								}
-							}
-						}
-					},
-					"403": {
-						"description": "No response from service"
-					},
-					"406": {
-						"description": "Combination of parameters raises a conflict"
-					},
-					"500": {
-						"description": "Internal error",
-						"content": {
-							"application/json": {
-								"schema": {
-									"${ref}": "#/definitions/error"
-								}
-							}
-						}
-
 					}
+				},
+				"403": {
+					"description": "No response from service"
+				},
+				"406": {
+					"description": "Combination of parameters raises a conflict"
+				},
+				"500": {
+					"description": "Internal error",
+					"content": {
+						"application/json": {
+							"schema": {
+								"${ref}": "#/definitions/error"
+							}
+						}
+					}
+
 				}
-			}`);	
+			}
+		}`);	
+
+
+		if json_getBool (iterList.this:'isfunction');
+			json_delete ( json_locate(pMethod : 'requestBody'));
+
+			json_moveobjectinto  ( pRoute  :  'get'  : pMethod ); 
+			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+			pParameters = json_moveobjectinto ( pRoute : 'parameters': json_newArray());
+
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  ;
+					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+				endif;
+			enddo;
+
+
+			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' : json_newObject() ); 
+			json_setStr(pParmsOutput : 'type' : 'object');
+			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
+					json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				endif;
+			enddo;
+		else;	
+
+
 			json_moveobjectinto  ( pRoute  :  'post'  : pMethod ); 
 			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 
-			pParms = json_moveobjectinto  ( pSchemas  :  Routine : json_newObject() ); 
-			json_setStr(pParms : 'type' : 'object');
-			pProperty  = json_moveobjectinto  ( pParms  :  'properties' : json_newObject() ); 
-			
-		endif;
+			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' : json_newObject() ); 
+			json_setStr(pParmsInput : 'type' : 'object');
+			pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
-		json_nodeInsert ( pProperty  : swaggerParm (iterList.this)  : JSON_LAST_CHILD); 
+			if resultSets = 0;
+				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' : json_newObject() ); 
+				json_setStr(pParmsOutput : 'type' : 'object');
+				pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+			endif;
 
-
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
+				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				endif;
+				if resultSets = 0;
+					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
+					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+				endif;
+			enddo;
+		endif; 
 	enddo;	
 
 
@@ -543,6 +606,34 @@ dcl-proc definitions;
 	}`);
 
 end-proc;
+
+// ------------------------------------------------------------------------------------
+// swaggerQueryParm
+// ------------------------------------------------------------------------------------
+dcl-proc swaggerQueryParm;
+
+	dcl-pi swaggerQueryParm pointer ;
+		pMetaParm pointer value;
+	end-pi;
+
+	dcl-s pParm pointer; 
+	dcl-s parmType int(5); 
+	dcl-s name varchar(32);
+
+	name = snakeToCamelCase(json_getstr (pMetaParm : 'parameter_name') );
+	if name = '';
+		name = 'parm' + json_getstr (pMetaParm : 'ordinal_position'); 
+	endif;
+
+	pParm = json_newObject(); 
+
+	json_setStr( pParm : 'name' : name);
+	json_setStr( pParm : 'in' : 'query');
+	json_copyValue (pParm : 'description' : pMetaParm : 'long_comment');
+	json_setStr    (pParm : 'type'        : dataTypeJson  (json_getstr (pMetaParm : 'data_type')));
+	json_setBool   (pParm : 'required'    : json_getstr(pMetaParm : 'IS_NULLABLE') <> 'YES' );
+	return pParm; 
+end-proc;
 // ------------------------------------------------------------------------------------
 // swaggerParm
 // ------------------------------------------------------------------------------------
@@ -557,6 +648,9 @@ dcl-proc swaggerParm;
 	dcl-s name varchar(32);
 	
 	name = snakeToCamelCase(json_getstr (pMetaParm : 'parameter_name') );
+	if name = '';
+		name = 'parm' + json_getstr (pMetaParm : 'ordinal_position'); 
+	endif;
 
 	pParm = json_newObject(); 
 	json_noderename (pParm : name );
