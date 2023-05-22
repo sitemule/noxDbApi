@@ -8,11 +8,11 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 	Service . . . : Stored procedure router 
 	Author  . . . : Niels Liisberg 
 	Company . . . : System & Method A/S
+	
 
 	noxdbapi is a simple way to expose stored procedures as RESTservice. 
 	Note - you might contain the services you expose either by access security
 	or by user defined access rules added to this code - Whatever serves you best.
-
 
 	
 
@@ -81,6 +81,9 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 	----------------------------------------------------------------------------- */
  /include qasphdr,jsonparser
  /include qasphdr,iceutility
+
+ dcl-s schemaListJs varchar(256) inz('"NOXDBAPI","QGPL"');
+ dcl-s schemaList varchar(256) inz('''NOXDBAPI'',''QGPL''');
  
 // --------------------------------------------------------------------
 // Main line:
@@ -90,20 +93,22 @@ dcl-proc main;
 	dcl-s url  			varchar(256);
 	dcl-s environment   varchar(32);
 	dcl-s schemaName    varchar(32);
+	dcl-s kind          varchar(16);
 	dcl-s procName 		varchar(128);
 	
 
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
-	procName    = word (url:3:'/');
+	kind        = word (url:3:'/');
+	procName    = word (url:4:'/');
 
 	if  schemaName = 'openapi-meta';
-		serveListSchemaProcs (environment : sesGetvar ('schemaName'));
+		serveListSchemaProcs (environment : schemaList);
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
 	else;
-		serveProcedureResponse (environment : schemaName : procName);
+		serveProcedureResponse (environment : schemaName : kind : procName);
 	endif; 
 
 
@@ -121,31 +126,23 @@ dcl-proc serveStatic;
 	dcl-s fileName varchar(256); 
 	dcl-s staticPath   varchar(256); 
 	dcl-s pResponse	pointer;
-
-	if schemaName = '';
-		pResponse =  FormatError (
-			'No schema name is provided (second url parameter)'
-		);
-		SetContentType ('application/json');
-		responseWriteJson(pResponse);
-		json_delete(pResponse);
-		return;
-	endif;
 	
 	staticPath  = strLower(getServerVar('SERVER_ROOT_PATH') + '/static');
 
-	// count the slashes ( aka the +2 )
-	fileName = %subst (url : 2 + %len(environment) + %len(schemaName) );
 
-	if  %len(fileName) <= 1;
-		sesSetVar  ('schemaName':schemaName);
+	if  %len(url)  <= %len(environment) + %len(schemaName) + 2;
 		fileName = staticPath + '/index.html'; 
 	else;		
+		// count the slashes ( aka the +2 )
+		fileName = %subst (url : 2 + %len(environment) + %len(schemaName) );
 		fileName = staticPath  + '/' + fileName; 
 	endif;
 
+
 	SetCharset ('charset=utf-8');
-	ResponseServeFile (fileName);
+	if ResponseServeFile (fileName);
+		setStatus ('404 ' + fileName + ' is missing');
+	endif;
 
 end-proc;
 
@@ -155,6 +152,7 @@ dcl-proc serveProcedureResponse ;
 	dcl-pi *n;
 		environment  varchar(32);
 		schema       varchar(32);
+		kind 		 varchar(16);
 		procName     varchar(128);
 	end-pi;
 	
@@ -163,22 +161,22 @@ dcl-proc serveProcedureResponse ;
 
 	SetContentType ('application/json');
 
-	pResponse = runService (environment : schema : procName);
+	pResponse = runService (environment : schema : kind : procName);
 	if (pResponse = *NULL);
 		pResponse =  FormatError (
 			'Null object returned from service'
 		);
 	endif;
 	
-	responseWriteJson(pResponse);
 	if json_getstr(pResponse : 'success') = 'false';
 		msg = json_getstr(pResponse: 'message');
 		if msg = '';
 			msg = json_getstr(pResponse: 'msg');
 		endif;
-		setStatus ('500 ' + msg);
+		setStatus ('406 ' + msg);
 		consoleLogjson(pResponse);
 	endif;
+	responseWriteJson(pResponse);
 	json_delete(pResponse);
 
 end-proc;
@@ -190,6 +188,7 @@ dcl-proc runService export;
 	dcl-pi *n pointer;
 		environment   varchar(32);
 		schemaName    varchar(32);
+		kind          varchar(16);		
 		procName	  varchar(128);
 	end-pi;
 	
@@ -218,10 +217,14 @@ dcl-proc runService export;
 		// Or if parametres are given atr the URL
 		getQryStrList ( name : value : '*FIRST');
 		dow name > '';
-			strAppend (parmlist : ',' : name + '=>' + strQuot(value));
+			strAppend (parmlist : ',' : camelToSnakeCase(name) + '=>' + strQuot(value));
 			getQryStrList ( name : value : '*NEXT');
 		enddo;    
-		sqlStmt = 'values ' + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + ')';
+		if kind = 'sf'; // scalar function 
+			sqlStmt = 'values ' + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + ')';
+		else; 
+			sqlStmt = 'select * from table ('  + schemaName + '.' + camelToSnakeCase(procName) + ' (' + parmlist + '))'; 	
+		endif;		
 	else;
 		// Build parameter from posted payload:
 		iterParms = json_SetIterator(pPayload);
@@ -295,7 +298,7 @@ dcl-proc serveListSchemaProcs;
 
 	dcl-pi *n;
 		environment varchar(32) const options(*varsize);
-		schemaName varchar(32) const options(*varsize);
+		schemaNameList varchar(256) const options(*varsize);
 	end-pi;
 
 	dcl-s pResult   pointer; 
@@ -308,17 +311,18 @@ dcl-proc serveListSchemaProcs;
  
 
 	pResult = json_sqlResultSet (`
-		Select a.routine_type, a.routine_schema , a.routine_name, a.long_comment as desc, a.max_dynamic_result_sets , b.*
+		Select a.routine_type, a.routine_schema , a.routine_name, a.long_comment as desc, a.max_dynamic_result_sets , a.function_type , b.*
 		from sysroutines a
 		left join  sysparms b 
 		on a.specific_schema = b.specific_schema and a.specific_name = b.specific_name 
-		where a.routine_schema = upper(${strQuot(schemaName)}) 
-		and (a.routine_type , a.specific_name)  in ( 
-           select routine_type , min(a.specific_name) 
-           from sysroutines  a
-		   where a.routine_schema = upper(${strQuot(schemaName)})
-           group by routine_type , a.routine_name
-       );
+		where a.routine_schema in ( ${schemaNamelist }) 
+		and (a.routine_type , a.routine_schema , a.specific_name)  in ( 
+           select c.routine_type, c.routine_schema , min(c.specific_name) 
+           from sysroutines  c
+		   where c.routine_schema in ( ${schemaNamelist })
+           group by c.routine_type ,c.routine_schema , c.routine_name
+       )
+	   order by a.routine_schema , a.routine_name
 
 	`);
 
@@ -365,9 +369,10 @@ dcl-proc reorderResultAsTree;
 			pRoutine = json_newObject();
 			json_setStr  (pRoutine : 'schema' :schema );
 			json_setStr  (pRoutine : 'routine':routine );
-			json_setBool (pRoutine : 'isfunction'  : json_getStr(iterList.this: 'routine_type' ) = 'FUNCTION');
+			json_setStr  (pRoutine : 'function_type'  : json_getStr(iterList.this: 'function_type' ));
 			json_setStr  (pRoutine : 'description': json_getStr(iterList.this: 'desc')) ;
 			json_setInt  (pRoutine : 'result_sets': json_getInt(iterList.this: 'max_dynamic_result_sets'));
+
 			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
 		endif;
@@ -407,7 +412,10 @@ dcl-proc buildSwaggerJson;
 	dcl-s Routine 		varchar(32);
 	dcl-s resultSets    int(5);
 	dcl-s OutputReference varchar(64);
+	dcl-s kind   		varchar(16);
+	
 
+ 
 	pOpenApi = json_parseString(`{
 		"openapi": "3.0.1",
 		"info": {
@@ -422,6 +430,34 @@ dcl-proc buildSwaggerJson;
 		]
 	}`);
 
+/* Base path ... 
+	pOpenApi = json_parseString(`{
+		"openapi": "3.0.1",
+		"info": {
+			"title": "${ getServerVar('SERVER_DESCRIPTION') }",
+			"version": "${ getServerVar('SERVER_SOFTWARE')}"
+		},
+		"servers": [
+			{
+				"url": "${ getServerVar('SERVER_URI') }/noxdbapi/{environment}",
+				"description": "${ getServerVar('SERVER_SYSTEM_NAME') }",
+				"variables": {
+					"port": {
+						"enum": [
+							"7007",
+							"7008"
+						],
+						"default": "7007"
+					},
+					"environment":{
+						"enum": [ ${ schemaList } ]
+					} 
+
+				}
+			}
+		]
+	}`);
+*/ 
 
 	pPaths      = json_moveobjectinto  ( pOpenApi    : 'paths'      : json_newObject() ); 
 	pComponents = json_moveobjectinto  ( pOpenApi    : 'components' : json_newObject()); 
@@ -441,14 +477,23 @@ dcl-proc buildSwaggerJson;
 			OutputReference = '"$ref":"#/components/schemas/' + routine + 'Output"';	
 		endif; 
 
+		if json_getStr(iterList.this:'function_type') = 'S';
+			kind = 'sf';
+		elseif json_getStr(iterList.this:'function_type') = 'T';
+			kind = 'tf';
+		else; 
+			kind = 'pr';
+		endif;
+		
+
 		pRoute = json_newObject();
-		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine);
+		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + kind + '/' + routine);
 		pMethod = json_parseString(
 		`{
 			"tags": [
-				"${routine}"
+				"${schema}"
 			],
-			"operationId": "${environment}",
+			"operationId": "${routine}",
 			"summary": "${  json_getStr(iterList.this:'description') }",
 			"requestBody": {
 				"content": {
@@ -477,7 +522,7 @@ dcl-proc buildSwaggerJson;
 				"406": {
 					"description": "Combination of parameters raises a conflict"
 				},
-				"500": {
+				"default": {
 					"description": "Internal error",
 					"content": {
 						"application/json": {
@@ -492,7 +537,8 @@ dcl-proc buildSwaggerJson;
 		}`);	
 
 
-		if json_getBool (iterList.this:'isfunction');
+		if json_getStr (iterList.this:'function_type') = 'S' // scalar
+		or json_getStr (iterList.this:'function_type') = 'T'; // table
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
 			json_moveobjectinto  ( pRoute  :  'get'  : pMethod ); 
