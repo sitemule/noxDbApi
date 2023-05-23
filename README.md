@@ -1,116 +1,151 @@
-# noxDbApi - Stored procedures as REST services.
+# noxDbAPI - SQL routines as web-services.
 
-Stored procedures and UDTF as web services using noxDb for IBM i 
+Stored procedures, UDTF and scalar functions as web services using noxDb for IBM i 
 
-noxDbApi is a simple way to expose Db2 stored procedures as web-services on the IBM i. 
-In this examples everything is full open, however you might contain the services 
+noxDbAPI is a simple way to expose Db2 stored procedures, UDTF and scalar functions as web-services on the IBM i. 
+
+In this example everything is fully open, however you might contain the services 
 you expose either by access security or by user defined access rules added to this code - Whatever serves you best.
 
-This application is using IceBreak - however you can easy follow the steps below and use the ILEastic and noxDB 
-open source project. You will see in the code that it is actually noxDB is doing all the magic.  
+This application is using IceBreak - however you can easily follow the steps below and use the ILEastic and noxDB 
+open source project. You will see in the code that it is actually noxDB that is doing all the magic.  
 
-noxDbApi supports Db2 stored procedures on the IBM i with parameters and even if thay returns dynamic result sets.
+## What is supported
+
+noxDbAPI supports Db2 stored procedures, UDTF and scalar functions. 
+
+Stored procedures will be handled by http "GET" operations if they: 
+1) have only input parameters
+2) returns one dynamic result set.
+
+Input parameters will be query-string parameters. 
 
 
-Look in the example below.
+Stored procedures will be handled by http "POST" operations if they: 
+1) have input parameters
+2) have output parameters
+3) have inout parameters
+
+Both input and output is JSON payloads 
 
 
-## 1) Creat environment
+UDTF - userdefined table functions will be handled by http "GET" operations.
+Input parameters will be query-string parameters. 
 
-Installation on your IBM i of `noxDbApi` should be done with `git` which are available via `yum` - you can read more about [yum here](https://bitbucket.org/ibmi/opensource/src/master/docs/yum/).  
+
+Scalar functions will be handled by http "GET" operations.
+Input parameters will be query-string parameters. 
+
+Note: Polymorphic procedures are not supported. noxDbAPI has no idea which implementation to use, so keep the schemas to only one implementation name pr. routine. 
+
+
+Look in the example below or in ```/sql/examples.sql``` for a complete example-
+
+
+
+
+## 1) Create the environment
+
+Installation on your IBM i of `noxDbAPI` should be done with `git` which are available via `yum` - you can read more about [yum here](https://bitbucket.org/ibmi/opensource/src/master/docs/yum/).  
 
 On your IBM i 
 
-First `ssh` or  `call qp2term` into your IBM i, install git and clone this repo into the IFS:
+First `ssh` or  `call qp2term` into your IBM i, install git and clone this repo into the IFS:
 
 ```
 yum install git
-git -c http.sslVerify=false clone https://github.com/sitemule/noxDbApi.git /prj/noxDbApi
+git -c http.sslVerify=false clone https://github.com/sitemule/noxDbAPI.git /prj/noxDbAPI
 ``` 
 
-This will create a directory `/prj/noxDbApi`
+This will create a directory `/prj/noxDbAPI`
 
 Now on a 5250 terminal:
 
 ```
 GO ICEBREAK
-ADDICESVR SVRID(noxDbApi) HTTPPATH('/prj/noxdbapi')  TEXT('Stored procedures, UDTF as webservices') SVRPORT(7007)                               
-STRICESVR SVRID(noxDbApi)
+ADDICESVR SVRID(noxDbAPI) HTTPPATH('/prj/noxdbAPI')  TEXT('Stored procedures, UDTF as webservices') SVRPORT(7007)                               
+STRICESVR SVRID(noxDbAPI)
 ```
 
 
-Compile the stored procedure router:
+Compile the noxDbAPI router router code:
 
 ```
-CRTICEPGM STMF('/prj/noxDbApi/noxDbApi.rpgle') SVRID(noxDbApi)
+CRTICEPGM STMF('/prj/noxDbAPI/noxDbAPI.rpgle') SVRID(noxDbAPI)
 ````
 
-### Enable noxDbApi in your web config:
+### Enable noxDbAPI in your web config:
 
-Add the noxDbApi in the routing section in you webconfig.xml file in your server root:
+1) Add the noxDbAPI in the routing section in you webconfig.xml file in your server root:
+2) Set the envvar NOXDBAPI_EXPOSE_SCHEMAS to the list of library / database schemas you will expose
 
 ```
 <routing strict="false">
-	<map pattern="^/noxdbapi/" pgm="noxdbapi" lib="*LIBL" />
+	<map pattern="^/noxdbAPI/" pgm="noxdbAPI" lib="*LIBL" />
 </routing>
+
+<envvar>
+    <var name="NOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI,MICRODEMO"/> 
+</envvar>
+
 ```
 
 
 ## 2) Using stored procedures: 
 
-Procedures can be used if they have:
 
-*	Parameter
-*	Return one dynamic result set:
+This example takes one input parameter and returns a dynamic result set. This is a perfect usecase for noxDbAPI. The comments we put on the procedure and parameters will be available in the openAPI (swagger) interface for documentation.  
 
-Example:
 
 Build a test stored procedure - paste this into ACS:
 
 ```
 -- Procedure returns a resultset
 --------------------------------
-CREATE or REPLACE PROCEDURE  noxDbApi.services_info_list  (
-      in service_search_name  varchar(20) default null
+CREATE or REPLACE PROCEDURE  noxDbAPI.services_info_list  (
+      in service_search_name  varchar(20) default null
 )
 LANGUAGE SQL 
 DYNAMIC RESULT SETS 1
 
 BEGIN
 
-    declare c1 cursor with return for
-    select * 
-    from   qsys2.services_info
-    where  service_search_name is null 
-    or     upper(service_name) like '%' concat upper(service_search_name) concat '%';
+    declare c1 cursor with return for
+    select * 
+    from   qsys2.services_info
+    where  service_search_name is null 
+    or     upper(service_name) like '%' concat upper(service_search_name) concat '%';
 
-    open c1;
+    open c1;
 
 END; 
 
-comment on procedure noxDbApi.services_info_list is 'Services info List';
-comment on parameter noxDbApi.services_info_list (service_search_name is 'Search services by name');
+comment on procedure noxDbAPI.services_info_list is 'Services info List';
+comment on parameter noxDbAPI.services_info_list (service_search_name is 'Search services by name');
 
 -- Test if the procedure works in ACS:
 
-call noxDbApi.services_info_list (service_search_name => 'ptf');
-call noxDbApi.services_info_list ();
+call noxDbAPI.services_info_list (service_search_name => 'ptf');
+call noxDbAPI.services_info_list ();
 
 ``` 
-
-
 
 ## 3) Into action:
 
 From your browser type the following, where `MY_IBM_I` is the name or TCP/IP address of your system: 
 ```
-http://MY_IBM_I:7007/noxDbAp/noxDbApi
+http://MY_IBM_I:7007/noxDbAp/
 ```
 
-The first /noxDbApi is the environmet - the routing name, you can change that in the webconfig.xml "routing" tag
+The first ```/noxDbAPI``` is the environment - the routing name, you can change that in the webconfig.xml "routing" tag
 
-The next /noxDbApi is the schema name. We suply our library `noxDbApi` where we put our procedure - any (user) library from the librarylist is valid to use ( so be carefull) 
 
-It will provide you with a openAPI interface for all stored procedures in this particuæar schema (library) where you can execute the procedures directly ( so be carefull)
+It will provide you with a openAPI interface for all stored procedures, UDTF and scalar function in the list you provide by the envvar ```NOXDBAPI_EXPOSE_SCHEMAS```
+
+Be careful - newer expose more than required. i.e. never expose QSYS2. It is possible but never do this. 
+
+Create a dedicated schema that will be used as web-services and simply expose one at the time. 
+
+
 
 
