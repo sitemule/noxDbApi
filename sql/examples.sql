@@ -110,7 +110,10 @@ call noxDbApi.concat_text (
 );  
 
 
-select * from qsys2.sysroutines where routine_schema = 'NOXDBAPI';
+select * from qsys2.sysroutines where routine_schema = 'QSYS2'
+and routine_name like 'ACT%' ;
 
- 
+select * from table ( qsys2.active_job_info ());
+
+drop routine corpdata.services_Info_Categories;
  

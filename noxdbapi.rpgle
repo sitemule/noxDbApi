@@ -219,7 +219,7 @@ dcl-proc runService export;
 	else; 
 		iterList = json_setIterator(pPayload);  
 		dow json_ForEach(iterList) ;  
-			json_noderename (iterList.this : snakeToCamelCase ( json_getname (iterList.this) ));
+			json_noderename (iterList.this : camelToSnakeCase ( json_getname (iterList.this) ));
 		enddo; 
 
 	endif;
@@ -236,6 +236,13 @@ dcl-proc runService export;
 			'Invalid action or parameter: '  
 		);
 	endif;
+
+	// The result will be in snake ( as is). JSON is typically Cammel 
+	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
+	iterList = json_setIterator(pResponse);  
+	dow json_ForEach(iterList) ;  
+		json_noderename (iterList.this : snakeToCamelCase ( json_getname (iterList.this) ));
+	enddo; 
 
 	json_delete ( pPayload);
 	return pResponse; 
