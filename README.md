@@ -1,8 +1,8 @@
-# noxDbAPI - SQL routines as web-services.
+# noxDbAPI is Db2 SQL routines as web-services for IBM i.
 
 Stored procedures, UDTF and scalar functions as web services using noxDb for IBM i 
 
-noxDbAPI is a simple way to expose Db2 stored procedures, UDTF and scalar functions as web-services on the IBM i. 
+noxDbAPI is a simple way to expose Db2 stored procedures, UDTF and scalar functions as web-services on the IBM i. noxDbAPI also provide the openAPI ( swagger) interface so you can discover and test you Db2 routines using a web interface. 
 
 In this example everything is fully open, however you might contain the services 
 you expose either by access security or by user defined access rules added to this code - Whatever serves you best.
@@ -57,7 +57,7 @@ yum install git
 git -c http.sslVerify=false clone https://github.com/sitemule/noxDbAPI.git /prj/noxDbAPI
 ``` 
 
-This will create a directory `/prj/noxDbAPI`
+This will create a directory `/prj/noxDbAPI` on your IFS.
 
 Now on a 5250 terminal:
 
@@ -134,18 +134,16 @@ call noxDbAPI.services_info_list ();
 
 From your browser type the following, where `MY_IBM_I` is the name or TCP/IP address of your system: 
 ```
-http://MY_IBM_I:7007/noxDbAp/
+http://MY_IBM_I:7007/noxDbApi/
 ```
 
 The first ```/noxDbAPI``` is the environment - the routing name, you can change that in the webconfig.xml "routing" tag
 
 
-It will provide you with a openAPI interface for all stored procedures, UDTF and scalar function in the list you provide by the envvar ```NOXDBAPI_EXPOSE_SCHEMAS```
+It will provide you with a openAPI (swagger) interface for all stored procedures, UDTF and scalar function in the list you provide by the envvar ```NOXDBAPI_EXPOSE_SCHEMAS```
 
 Be careful - newer expose more than required. i.e. never expose QSYS2. It is possible but never do this. 
 
 Create a dedicated schema that will be used as web-services and simply expose one at the time. 
-
-
 
 
