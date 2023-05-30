@@ -54,6 +54,7 @@ select * from table( noxDbApi.services_info_categories ());
 
 ----------------------------------------------------------------------
 -- Scalar function 
+-- Note: This can be used to test errors: Divide by zero 
 create or replace function  noxDbApi.divide  (
     dividend  float ,
     divisor   float 
@@ -73,7 +74,7 @@ comment on parameter noxDbApi.divide (divisor is 'Divisor');
 -- Test if the procedure works in ACS:
 values noxDbApi.divide ( dividend => 100 , divisor => 10);
 values noxDbApi.divide ( dividend => 1   , divisor => 3 );
-values noxDbApi.divide ( dividend => 1   , divisor => 0 );
+values noxDbApi.divide ( dividend => 1   , divisor => 0 ); -- Fails of cause
 
 
 select * from qsys2.sysroutines where routine_schema = 'NOXDBAPI';
@@ -109,11 +110,3 @@ call noxDbApi.concat_text (
   result_text => ?
 );  
 
-
-select * from qsys2.sysroutines where routine_schema = 'QSYS2'
-and routine_name like 'ACT%' ;
-
-select * from table ( qsys2.active_job_info ());
-
-drop routine corpdata.services_Info_Categories;
- 

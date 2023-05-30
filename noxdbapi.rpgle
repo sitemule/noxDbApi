@@ -126,14 +126,22 @@ dcl-proc serveStatic;
 	
 	staticPath  = strLower(getServerVar('SERVER_ROOT_PATH') + '/static');
 
-	if  %len(url)  <= %len(environment) + %len(schemaName) + 2;
-		fileName = staticPath + '/index.html'; 
+	if  %len(url)  = %len(environment);
+		redirect (environment + '/');
+		return;
+	elseif  %len(url)  = %len(environment + '/');
+		fileName = staticPath + '/swagger/index.html'; 
 	else;		
 		// count the slashes ( aka the +2 )
-		fileName = %subst (url : 2 + %len(environment) + %len(schemaName) );
-		fileName = staticPath  + '/' + fileName; 
+		fileName = %subst (url : 2 + %len(environment) );
+		if  fileName = 'swagger-initializer.js';
+			fileName = staticPath  + '/' + fileName; 
+		else;
+			fileName = staticPath  + '/swagger/' + fileName; 
+		endif;
 	endif;
 
+	consoleLog (fileName);
 
 	SetCharset ('charset=utf-8');
 	if ResponseServeFile (fileName);
@@ -152,42 +160,7 @@ dcl-proc serveProcedureResponse ;
 	end-pi;
 	
 	dcl-s pResponse		pointer;		
-	dcl-s msg 			varchar(512);		
-
-	SetContentType ('application/json');
-
-	pResponse = runService (environment : schema : procName);
-	if (pResponse = *NULL);
-		pResponse =  FormatError (
-			'Null object returned from service'
-		);
-	endif;
-	
-	if json_getstr(pResponse : 'success') = 'false';
-		msg = json_getstr(pResponse: 'message');
-		if msg = '';
-			msg = json_getstr(pResponse: 'msg');
-		endif;
-		setStatus ('406 ' + msg);
-		consoleLogjson(pResponse);
-	endif;
-
-	responseWriteJson(pResponse);
-	json_delete(pResponse);
-
-end-proc;
-/* -------------------------------------------------------------------- *\ 
-   	run the procedure call using noxDb
-\* -------------------------------------------------------------------- */
-dcl-proc runService export;	
-
-	dcl-pi *n pointer;
-		environment   varchar(32);
-		schemaName    varchar(32);
-		procName	  varchar(128);
-	end-pi;
-	
-	dcl-s pResponse		pointer;	
+	dcl-s msg 			varchar(512);	
 	dcl-s pPayload      pointer;	
 	dcl-s name  		varchar(64);
 	dcl-s value  		varchar(32760);
@@ -197,12 +170,16 @@ dcl-proc runService export;
 	dcl-s len 			int(10);
 	dcl-ds iterParms  	likeds(json_iterator);
 	dcl-ds iterList  	likeds(json_iterator);  
+	
+
+	SetContentType ('application/json;charset=UTF-8');
 
 
-	if schemaName <= '';
-		return FormatError (
+	if schema <= '';
+		pResponse =FormatError (
 			'Need schema and procedure'
 		);
+		return;
 	endif;
 
 	pPayload = json_ParseRequest();
@@ -225,17 +202,17 @@ dcl-proc runService export;
 	endif;
 
 	pResponse = json_sqlExecuteRoutine (
-		schemaName + '.' + camelToSnakeCase(procName) : 
+		schema + '.' + camelToSnakeCase(procName) : 
 		pPayload : 
 		JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR
 	);
 
-	if json_Error(pResponse);
-		consolelog(sqlStmt);
-		pResponse= FormatError (
-			'Invalid action or parameter: '  
-		);
-	endif;
+	//	if json_Error(pResponse);
+	//		consolelog(sqlStmt);
+	//		pResponse= FormatError (
+	//			'Invalid action or parameter: '  
+	//		);
+	//	endif;
 
 	// The result will be in snake ( as is). JSON is typically Cammel 
 	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
@@ -244,47 +221,28 @@ dcl-proc runService export;
 		json_noderename (iterList.this : snakeToCamelCase ( json_getname (iterList.this) ));
 	enddo; 
 
-	json_delete ( pPayload);
-	return pResponse; 
+
+	return;
+
+on-exit; 
+
+	if   json_locate (pResponse : 'result') <> *NULL
+	and  json_isnull (pResponse : 'result');
+		setStatus ('404');
+	elseif json_getstr(pResponse : 'success') = 'false';
+		msg = json_getstr(pResponse: 'message');
+		if msg = '';
+			msg = json_getstr(pResponse: 'msg');
+		endif;
+		setStatus ('406 ' + msg);
+		consoleLogjson(pResponse);
+	endif;
+
+	responseWriteJson(pResponse);
+	json_delete( pResponse);
+	json_delete (pPayload);
 
 end-proc;
-
-/* -------------------------------------------------------------------- *\ 
-   	Return meta info about routine / parameters 
-\* -------------------------------------------------------------------- */
-/**********' '
-dcl-proc getRoutineMeta  export;	
-
-	dcl-pi *n pointer;
-		schemaName    varchar(32);
-		procName	  varchar(128);
-	end-pi;
-	
-	dcl-s pRoutine		pointer;	
-	dcl-s pParameters   pointer;	
-
- 
-
-	pRoutine  = json_sqlResultRow (`
-		Select specific_schema , specific_name , routine_type, routine_schema , routine_name, long_comment , max_dynamic_result_sets , function_type 
-		from sysroutines 
-		where routine_schema = ${ strQuot ( schemaName }) 
-		and routine_name = ${ strQuot ( procName }) 
-	`);
-
-	pParameters  = json_sqlResultSet (`
-		Select * 
-		from sysparms  
-		where specific_schema = ${ strQuot ( json_getStr( pRoutine : 'specific_schema'))}
-		and  specific_name    = ${ strQuot ( json_getStr( pRoutine : 'specific_name'  ))}
-	`);
-
-	json_moveobjectinto (pRoutine : 'parameters': pParameters);
-
-	return pRoutine;
-end-proc
-
-**/
 
 /* -------------------------------------------------------------------- *\ 
    JSON error monitor 
@@ -447,7 +405,7 @@ dcl-proc buildSwaggerJson;
 	dcl-s Schema   		varchar(32);
 	dcl-s Routine 		varchar(32);
 	dcl-s resultSets    int(5);
-	dcl-s OutputReference varchar(64);
+	dcl-s OutputReference varchar(256);
 
  
 	pOpenApi = json_parseString(`{
@@ -463,6 +421,8 @@ dcl-proc buildSwaggerJson;
 			}
 		]
 	}`);
+
+
 
 /* Base path ... 
 	pOpenApi = json_parseString(`{
@@ -545,6 +505,17 @@ dcl-proc buildSwaggerJson;
 				"403": {
 					"description": "No response from service"
 				},
+				"404": {
+					"description": "Resource not found",
+					"content": {
+						"application/json": {
+							"schema": {
+								"${ref}": "#/definitions/notFound"
+							}
+						}
+					}
+
+				}
 				"406": {
 					"description": "Combination of parameters raises a conflict"
 				},
@@ -584,12 +555,31 @@ dcl-proc buildSwaggerJson;
 			json_setStr(pParmsOutput : 'type' : 'object');
 			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
-					json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-				endif;
-			enddo;
+			if json_getStr (iterList.this:'function_type') = 'S'; // scalar
+
+				pParm = json_newObject(); 
+				json_noderename (pParm : 'success' );
+				json_setStr    (pParm : 'name'        : 'success');
+				json_setStr    (pParm : 'type'        : 'boolean');
+				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+				pParm = swaggerParm (
+					json_getChild( 
+						json_locate (iterList.this:'parms') 
+					)
+				);
+				json_noderename (pParm : 'result' );
+				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+
+			else;
+				iterParms = json_setIterator(iterList.this:'parms');  
+				dow json_ForEach(iterParms) ;  
+					if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
+						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+				enddo;
+			endif;
 		else;	
 
 
@@ -673,6 +663,19 @@ dcl-proc definitions;
 				},
 				"message": {
 					"type": "string"
+				}
+			}
+		},
+		"notFound": {
+			"type": "object",
+			"properties": {
+				"success": {
+					"type": "boolean",
+					"default": false
+				},
+				"result": {
+					"type": "string",
+					"default": null
 				}
 			}
 		}

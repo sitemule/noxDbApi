@@ -78,7 +78,8 @@
 	 -->  
 
 	<envvar>
-		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI,CORPDATA"/> 
+		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="CORPDATA"/> 
+		<var name="XXX_NOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI,CORPDATA,QSYS2"/> 
 	</envvar>
 	
 

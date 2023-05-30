@@ -4,6 +4,9 @@ call qsys.create_sql_sample('CORPDATA');
 -- We can then play with these;
 select * from systables where table_schema= 'CORPDATA';
  
+     select *
+    from   corpdata.employee;
+
 
 ----------------------------------------------------------------
 -- Example1: 
@@ -25,7 +28,8 @@ begin
     open c1;
  
 end;
- 
+
+-- The parameter description will be visible in the openAPI( swagger) user interface: 
 comment on procedure corpdata.employee_list is 'Employee List';
 comment on parameter corpdata.employee_list (employee_search_name is 'Search Employee List by name');
  
@@ -33,7 +37,6 @@ comment on parameter corpdata.employee_list (employee_search_name is 'Search Emp
 call corpdata.employee_list (employee_search_name => 'john');
 call corpdata.employee_list ();
 
-----------------------------------------------------------------
 ---------------------------------------------------------------
 -- Example2: 
 -- UDTF - Userdefined table function that returns a table 
@@ -67,6 +70,7 @@ begin
 
 end; 
 
+-- The parameter description will be visible in the openAPI( swagger) user interface: 
 comment on function corpdata.department_list is 'Departments';
 comment on parameter function corpdata.department_list (search_department_name is 'Search departments by name');
 
@@ -78,9 +82,9 @@ select * from table( corpdata.department_list ());
 select * from corpdata.department;
 
 create or replace function  corpdata.administrating_department_for_id  (
-    department_ID  CHARACTER(3)
+    department_ID  character(3)
 )
-returns CHARACTER(3) 
+returns character(3) 
 language sql 
 begin
 
@@ -93,14 +97,14 @@ begin
 
 end; 
 
+-- The parameter description will be visible in the openAPI( swagger) user interface: 
 comment on function corpdata.administrating_department_for_id is 'Returns the administration department id for an department id ';
 comment on parameter corpdata.administrating_department_for_id (department_ID is 'department ID');
 
 -- Test if the procedure works in ACS:
 values corpdata.administrating_department_for_id  ( department_ID => 'D01');
-values corpdata.administrating_department_for_id  ( department_ID => 'XYZ');
+values corpdata.administrating_department_for_id  ( department_ID => 'XYZ'); -- error test: returns NULL
 
- 
 
 
 ----------------------------------------------------------------------
@@ -138,6 +142,7 @@ begin
 
 end; 
 
+-- The parameter description will be visible in the openAPI( swagger) user interface: 
 comment on procedure corpdata.employee_info is 'Employee information';
 comment on parameter corpdata.employee_info (employee_id is 'Employee id');
 

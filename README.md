@@ -142,7 +142,7 @@ The first ```/noxDbAPI``` is the environment - the routing name, you can change 
 
 It will provide you with a openAPI (swagger) interface for all stored procedures, UDTF and scalar function in the list you provide by the envvar ```NOXDBAPI_EXPOSE_SCHEMAS```
 
-Be careful - newer expose more than required. i.e. never expose QSYS2. It is possible but never do this. 
+Be careful - never expose more than required. i.e. never expose QSYS2. It is possible to do so - and I'm doing it here for example purposes - but never do this in production. 
 
 Create a dedicated schema that will be used as web-services and simply expose one at the time. 
 
