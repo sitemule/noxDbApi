@@ -305,19 +305,41 @@ dcl-proc serveListSchemaProcs;
 	schemaList = '''' + %scanrpl (',':''',''': schemaNameList) + '''';
 
 	pResult = json_sqlResultSet (`
-		Select a.routine_type, a.routine_schema , a.routine_name, a.long_comment as desc, a.max_dynamic_result_sets , a.function_type , b.*
-		from sysroutines a
-		left join  sysparms b 
-		on a.specific_schema = b.specific_schema and a.specific_name = b.specific_name 
-		where a.routine_schema in ( ${schemaList }) 
-		and (a.routine_type , a.routine_schema , a.specific_name)  in ( 
-           select c.routine_type, c.routine_schema , min(c.specific_name) 
-           from sysroutines  c
-		   where c.routine_schema in ( ${schemaList })
-           group by c.routine_type ,c.routine_schema , c.routine_name
-       )
-	   order by a.routine_schema , a.routine_name
-
+		with 
+			routines as ( 
+				select 
+				case function_type
+					when 'S' then 'SCALAR'
+					when 'T' then 'TABLE'
+					else          'PROCEDURE'
+				end routine_type,
+				routine_schema , 
+				routine_name, 
+                specific_schema,
+				specific_name, 
+				long_comment,
+				max_dynamic_result_sets
+				from sysroutines 
+				where routine_schema in (${schemaList}) 
+			), 
+			implementation as ( 
+				select count(*) number_of_implementations, routine_type, routine_schema,routine_name
+				from routines
+				group by routine_type, routine_schema,routine_name
+			)
+		select 
+			i.number_of_implementations,
+			r.routine_type, 
+			r.routine_name,
+			r.long_comment desc,
+			r.max_dynamic_result_sets,
+			p.*
+		from routines r
+		join implementation i 
+			on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
+		left join sysparms p 
+			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
+		order by r.routine_schema , r.routine_name;
 	`);
 
 	pRoutineTree = reorderResultAsTree (pResult);
@@ -354,7 +376,7 @@ dcl-proc reorderResultAsTree;
 	iterList = json_setIterator(pRoutines);  
 	dow json_ForEach(iterList) ;  
 
-		schema =  snakeToCamelCase (json_getStr (iterList.this:'routine_schema'));
+		schema =  snakeToCamelCase (json_getStr (iterList.this:'specific_schema'));
 		routine = snakeToCamelCase (json_getStr (iterList.this:'routine_name')); 
 		SchemaRoutine =  schema + '/' + routine;
 
@@ -363,9 +385,11 @@ dcl-proc reorderResultAsTree;
 			pRoutine = json_newObject();
 			json_setStr  (pRoutine : 'schema' :schema );
 			json_setStr  (pRoutine : 'routine':routine );
-			json_setStr  (pRoutine : 'function_type'  : json_getStr(iterList.this: 'function_type' ));
-			json_setStr  (pRoutine : 'description': json_getStr(iterList.this: 'desc')) ;
-			json_setInt  (pRoutine : 'result_sets': json_getInt(iterList.this: 'max_dynamic_result_sets'));
+			json_setStr  (pRoutine : 'routine_type': json_getStr(iterList.this: 'routine_type' ));
+			json_setStr  (pRoutine : 'description' : json_getStr(iterList.this: 'desc')) ;
+			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
+			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
+			
 
 			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
@@ -474,6 +498,7 @@ dcl-proc buildSwaggerJson;
 
 		pRoute = json_newObject();
 		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine);
+
 		pMethod = json_parseString(
 		`{
 			"tags": [
@@ -532,10 +557,15 @@ dcl-proc buildSwaggerJson;
 				}
 			}
 		}`);	
+		if json_getInt (iterList.this : 'implementations') > 1;
+			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
+				json_getStr (iterList.this : 'implementations') + 
+				' implementations and can not be executed. Can not decide which to use'); 
+		endif;
 
 
-		if json_getStr (iterList.this:'function_type') = 'S' // scalar
-		or json_getStr (iterList.this:'function_type') = 'T' // table
+		if json_getStr (iterList.this:'routine_type') = 'SCALAR' // scalar
+		or json_getStr (iterList.this:'routine_type') = 'TABLE' // table
 		or resultSets >= 1;                                  // Procedure with result set (open cursor)  
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
@@ -555,7 +585,7 @@ dcl-proc buildSwaggerJson;
 			json_setStr(pParmsOutput : 'type' : 'object');
 			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
-			if json_getStr (iterList.this:'function_type') = 'S'; // scalar
+			if json_getStr (iterList.this:'routine_type') = 'SCALAR'; // scalar
 
 				pParm = json_newObject(); 
 				json_noderename (pParm : 'success' );
@@ -684,6 +714,27 @@ dcl-proc definitions;
 end-proc;
 
 // ------------------------------------------------------------------------------------
+// swaggerCommonParmmeters
+// ------------------------------------------------------------------------------------
+dcl-proc swaggerCommonParmmeters;
+
+	dcl-pi *N;
+		pSwaggerParm pointer value;
+		pMetaParm pointer value;
+	end-pi;
+
+	json_setStr ( pSwaggerParm : 'description' : parameterDescription (pMetaParm ));
+	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
+	json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
+	json_setBool( pSwaggerParm : 'required'    : json_isnull (pMetaParm : 'DEFAULT') );
+	
+	if json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH') > 0;
+		json_setInt     ( pSwaggerParm : 'maxLength'   : json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH'));
+	endif;
+
+end-proc;
+
+// ------------------------------------------------------------------------------------
 // swaggerQueryParm
 // ------------------------------------------------------------------------------------
 dcl-proc swaggerQueryParm;
@@ -703,12 +754,13 @@ dcl-proc swaggerQueryParm;
 
 	pParm = json_newObject(); 
 
-	json_setStr( pParm : 'name' : name);
-	json_setStr( pParm : 'in' : 'query');
-	json_copyValue (pParm : 'description' : pMetaParm : 'long_comment');
-	json_setStr    (pParm : 'type'        : dataTypeJson  (json_getstr (pMetaParm : 'data_type')));
-	json_setBool   (pParm : 'required'    : json_getstr(pMetaParm : 'IS_NULLABLE') <> 'YES' );
-	return pParm; 
+	json_setStr ( pParm : 'name' : name);
+	json_setStr ( pParm : 'in' : 'query');
+	swaggerCommonParmmeters ( pParm : pMetaParm);
+
+	return pParm;
+
+
 end-proc;
 // ------------------------------------------------------------------------------------
 // swaggerParm
@@ -729,12 +781,9 @@ dcl-proc swaggerParm;
 	endif;
 
 	pParm = json_newObject(); 
-	json_noderename (pParm : name );
-	json_setStr    (pParm : 'name'        : name);
-	json_copyValue (pParm : 'description' : pMetaParm : 'long_comment');
-	json_setStr    (pParm : 'type'        : dataTypeJson  (json_getstr (pMetaParm : 'data_type')));
-	json_setStr    (pParm : 'format'      : dataFormatJson(json_getstr (pMetaParm : 'data_type')));
-	json_setBool   (pParm : 'required'    : json_getstr(pMetaParm : 'IS_NULLABLE') <> 'YES' );
+	json_noderename( pParm : name );
+	swaggerCommonParmmeters ( pParm : pMetaParm);
+
 	return pParm;
 
 end-proc;
@@ -796,12 +845,33 @@ end-proc;
 dcl-proc dataTypeJson;
 
 	dcl-pi *n varchar(32);
-		inputType varchar(32) const options(*varsize);
+		pMetaParm pointer value;
 	end-pi;
 
+	dcl-s inputType varchar(32);
+	dcl-s numericScale int (5);
+	dcl-s numericPrecision int (5);
+	 
+	inputType = json_getstr (pMetaParm : 'data_type');
+	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+
 	select; 
-		when %len(inputType) >= 3 and %subst ( strLower (inputType) : 1 : 3)  = 'int';
+		when inputType = 'INTEGER' 
+		or   inputType = 'SMALLINT' 
+		or   inputType = 'BIGINT' 
+		or   (inputType = 'DECIMAL' and numericScale =0)
+		or   (inputType = 'NUMERIC' and numericScale =0);
 			return 'integer';
+
+		when inputType = 'DECIMAL' 
+		or   inputType = 'NUMERIC' 
+		or   inputType = 'DECFLOAT' 
+		or   inputType = 'REAL' 
+		or   inputType = 'FLOAT' 
+		or   inputType = 'DOUBLE'; 
+			return 'number';
+
 		other;
 			return 'string';
 	endsl;
@@ -814,16 +884,100 @@ end-proc;
 dcl-proc dataFormatJson;
 
 	dcl-pi *n varchar(32);
-		inputType varchar(32) const options(*varsize);
+		pMetaParm pointer value;
 	end-pi;
 
-	select; 
-		when %len(inputType) >= 3 and %subst ( strLower (inputType) : 1 : 3)  = 'int';
-			return 'int64';
-		other;
-			return '';
+	dcl-s inputType varchar(32);
+	dcl-s formatString varchar(32);
+	dcl-s numericScale int (5);
+	dcl-s numericPrecision int (5);
+	 
+	inputType = json_getstr (pMetaParm : 'data_type');
+	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
 
+	select; 
+		when   inputType = 'BIGINT' 
+		or    (inputType = 'DECIMAL' and numericScale =0 and numericPrecision > 9)
+		or    (inputType = 'NUMERIC' and numericScale =0 and numericPrecision > 9);
+			return 'int64';
+ 
+		when inputType = 'INTEGER' 
+		or   inputType = 'SMALLINT' 
+		or    (inputType = 'DECIMAL' and numericScale =0 and numericPrecision <= 9)
+		or    (inputType = 'NUMERIC' and numericScale =0 and numericPrecision <= 9);
+			return 'int32';
+
+		when inputType = 'DECIMAL' 
+		or   inputType = 'NUMERIC' 
+		or   inputType = 'DECFLOAT' 
+		or   inputType = 'REAL' 
+		or   inputType = 'FLOAT' 
+		or   inputType = 'DOUBLE'; 
+			return 'double';
+
+		when inputType = 'DATE'; 
+			return 'date';
+
+		when inputType = 'TIMESTAMP'; 
+			return 'datetime';
+
+		other;
+			return dataTypeAsText (pMetaParm);
 	endsl;
 
 end-proc;
 
+// ------------------------------------------------------------------------------------
+// Data type in text
+// ------------------------------------------------------------------------------------
+dcl-proc dataTypeAsText;
+
+	dcl-pi *n varchar(32);
+		pMetaParm pointer value;
+	end-pi;
+
+	dcl-s inputType varchar(32);
+	dcl-s formatString varchar(32);
+	dcl-s numericScale int (5);
+	dcl-s length int (5);
+	 
+	inputType = json_getstr (pMetaParm : 'data_type');
+	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
+
+	if json_isnull (pMetaParm : 'NUMERIC_PRECISION');
+		length = json_getint (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH');
+	else;
+		length = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+	endif;
+
+
+	formatString =  strLower(inputType + '(' + %char(length));
+	if numericScale > 0; 
+		formatString += ',' + %char(numericScale);
+	endif;
+	formatString += ')';
+	return formatString;
+
+end-proc;
+
+
+// ------------------------------------------------------------------------------------
+// parameter description
+// ------------------------------------------------------------------------------------
+dcl-proc parameterDescription ;
+
+	dcl-pi *n varchar(1024);
+		pMetaParm pointer value;
+	end-pi;
+
+	dcl-s  description varchar(1024);
+	
+	if json_isnull (pMetaParm : 'long_comment' ); 
+		description = 	json_getStr ( pMetaParm : 'parameter_name') + ' as ' + dataTypeAsText(pMetaParm);
+	else;
+		description = 	json_getStr ( pMetaParm : 'long_comment');
+	endif; 
+	return description;
+
+end-proc;
