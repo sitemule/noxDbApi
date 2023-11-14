@@ -1,8 +1,11 @@
-﻿create or replace procedure  noxDbApi.services_info_list  (
+﻿--drop  procedure  noxDbApi.services_info_list;
+
+create or replace procedure  noxDbApi.services_info_list  (
     in service_search_name  varchar(20) default null
 )
 language sql 
 dynamic result sets 1
+
 
 begin
 
@@ -26,6 +29,7 @@ call noxDbApi.services_info_list ();
 
 ---------------------------------------------------------------
 -- UDTF 
+--drop function noxDbApi.services_info_categories;
 create or replace function noxDbApi.services_info_categories  (
     search_category varchar(20) default null
 )
@@ -36,6 +40,9 @@ returns table (
 language sql 
 
 begin
+
+    declare method varchar(20); 
+    
 
     return 
         select service_category , count(*) 
@@ -109,4 +116,33 @@ call noxDbApi.concat_text (
   text2 => 'Liisberg',
   result_text => ?
 );  
+
+------------------------------------------------
+create or replace procedure  noxDbApi.list_customer  (
+    in search_name  varchar(20) default null
+)
+language sql 
+dynamic result sets 1
+
+
+begin
+
+    declare c1 cursor with return for
+    select * 
+    from   qiws.QCUSTCDT
+    where  search_name is null 
+    or     upper(LSTNAM) like '%' concat upper(search_name) concat '%';
+
+    open c1;
+
+end; 
+
+comment on procedure noxDbApi.list_customer is 'List customers';
+comment on parameter noxDbApi.list_customer (search_name is 'Search by name');
+
+call noxDbApi.list_customer ();
+
+
+
+
 

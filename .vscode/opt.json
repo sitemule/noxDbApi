@@ -1,6 +1,6 @@
 {
 	"id":"NOXDBAPI",
-	"server":"http://192.168.5.206:7007",
-	"env":"SVCUDV",
-	"path":"/prj/noxdbapi"
+	"server":"http://DKSRV134:7007",
+	"env":"ICEBREAK",
+	"path":"/prj/noxdbAPI"
 }

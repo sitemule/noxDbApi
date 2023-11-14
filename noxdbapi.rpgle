@@ -940,7 +940,8 @@ dcl-proc dataTypeAsText;
 	dcl-s inputType varchar(32);
 	dcl-s formatString varchar(32);
 	dcl-s numericScale int (5);
-	dcl-s length int (5);
+	dcl-s length int (20);
+
 	 
 	inputType = json_getstr (pMetaParm : 'data_type');
 	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
