@@ -11,7 +11,7 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 	
 
 	noxdbapi is a simple way to expose stored procedures as RESTservice. 
-	Note - you might contain the services you expose either by access security
+	Note - you might contain the services you expose either by access fsecurity
 	or by user defined access rules added to this code - Whatever serves you best.
 
 	
@@ -89,8 +89,8 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 dcl-proc main;
 
 	dcl-s url  			varchar(256);
-	dcl-s environment   varchar(32);
-	dcl-s schemaName    varchar(32);
+	dcl-s environment   varchar(64);
+	dcl-s schemaName    varchar(64);
 	dcl-s procName 		varchar(128);
  	
 
@@ -114,8 +114,8 @@ end-proc;
 dcl-proc serveStatic;
 
 	dcl-pi *n;
-		environment varchar(32);
-		schemaName varchar(32);
+		environment varchar(64);
+		schemaName varchar(64);
 		url varchar(256);
 	end-pi;
 
@@ -154,8 +154,8 @@ end-proc;
 dcl-proc serveProcedureResponse ;	
 
 	dcl-pi *n;
-		environment  varchar(32);
-		schema       varchar(32);
+		environment  varchar(64);
+		schema       varchar(64);
 		procName     varchar(128);
 	end-pi;
 	
@@ -288,7 +288,7 @@ end-proc;
 dcl-proc serveListSchemaProcs;
 
 	dcl-pi *n;
-		environment 	varchar(32) const options(*varsize);
+		environment 	varchar(64) const options(*varsize);
 		schemaNameList 	varchar(256) const options(*varsize);
 	end-pi;
 
@@ -297,8 +297,8 @@ dcl-proc serveListSchemaProcs;
 	dcl-s pRoutineTree 	pointer;
 	
 	dcl-ds iterList  	likeds(json_iterator);
-	dcl-s  prevSchema   varchar(32);
-	dcl-s  prevRoutine 	varchar(32);
+	dcl-s  prevSchema   varchar(64);
+	dcl-s  prevRoutine 	varchar(64);
 	dcl-s  schemaList   varchar(256);
 
 	// Convert the list to SQL format of "IN" 
@@ -339,6 +339,7 @@ dcl-proc serveListSchemaProcs;
 			on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
 		left join sysparms p 
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
+	    where i.number_of_implementations = 1
 		order by r.routine_schema , r.routine_name;
 	`);
 
@@ -365,7 +366,7 @@ dcl-proc reorderResultAsTree;
 	dcl-s  pTree     pointer;
 	dcl-s  pRoutine  pointer;
 	dcl-s  pParms    pointer;
-	dcl-s  Schema    varchar(32);
+	dcl-s  Schema    varchar(64);
 	dcl-s  Routine 	 varchar(128);
 	dcl-s prevSchemaRoutine varchar(256);
 	dcl-s schemaRoutine varchar(256);
@@ -406,7 +407,7 @@ end-proc;
 dcl-proc buildSwaggerJson;
 
 	dcl-pi *n pointer;
-		environment varchar(32) const options(*varsize);
+		environment varchar(64) const options(*varsize);
 		pRoutines pointer value;
 	end-pi;
 
@@ -426,8 +427,8 @@ dcl-proc buildSwaggerJson;
 	dcl-s pParmsInput 	pointer;
 	dcl-s pParmsOutput 	pointer;	
 	dcl-s ref   		varchar(10) inz('$ref');
-	dcl-s Schema   		varchar(32);
-	dcl-s Routine 		varchar(32);
+	dcl-s Schema   		varchar(64);
+	dcl-s Routine 		varchar(64);
 	dcl-s resultSets    int(5);
 	dcl-s OutputReference varchar(256);
 
@@ -745,7 +746,7 @@ dcl-proc swaggerQueryParm;
 
 	dcl-s pParm pointer; 
 	dcl-s parmType int(5); 
-	dcl-s name varchar(32);
+	dcl-s name varchar(64);
 
 	name = snakeToCamelCase(json_getstr (pMetaParm : 'parameter_name') );
 	if name = '';
@@ -773,7 +774,7 @@ dcl-proc swaggerParm;
 
 	dcl-s pParm pointer; 
 	dcl-s parmType int(5); 
-	dcl-s name varchar(32);
+	dcl-s name varchar(64);
 	
 	name = snakeToCamelCase(json_getstr (pMetaParm : 'parameter_name') );
 	if name = '';
@@ -844,11 +845,11 @@ end-proc;
 // ------------------------------------------------------------------------------------
 dcl-proc dataTypeJson;
 
-	dcl-pi *n varchar(32);
+	dcl-pi *n varchar(64);
 		pMetaParm pointer value;
 	end-pi;
 
-	dcl-s inputType varchar(32);
+	dcl-s inputType varchar(64);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
 	 
@@ -883,12 +884,12 @@ end-proc;
 // ------------------------------------------------------------------------------------
 dcl-proc dataFormatJson;
 
-	dcl-pi *n varchar(32);
+	dcl-pi *n varchar(64);
 		pMetaParm pointer value;
 	end-pi;
 
-	dcl-s inputType varchar(32);
-	dcl-s formatString varchar(32);
+	dcl-s inputType varchar(64);
+	dcl-s formatString varchar(64);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
 	 
@@ -933,12 +934,12 @@ end-proc;
 // ------------------------------------------------------------------------------------
 dcl-proc dataTypeAsText;
 
-	dcl-pi *n varchar(32);
+	dcl-pi *n varchar(64);
 		pMetaParm pointer value;
 	end-pi;
 
-	dcl-s inputType varchar(32);
-	dcl-s formatString varchar(32);
+	dcl-s inputType varchar(64);
+	dcl-s formatString varchar(64);
 	dcl-s numericScale int (5);
 	dcl-s length int (20);
 
