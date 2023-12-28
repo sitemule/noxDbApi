@@ -1,4 +1,4 @@
-﻿<%@ free="*YES" language="RPGLE" runasowner="*YES" owner="QPGMR"%>
+﻿<%@ free="*YES" language="SQLRPGLE" runasowner="*YES" owner="QPGMR"%>
 <%
 ctl-opt copyright('System & Method (C), 2019-2023');
 ctl-opt decEdit('0,') datEdit(*YMD.) main(main); 
@@ -202,9 +202,10 @@ dcl-proc serveProcedureResponse ;
 	endif;
 
 	pResponse = json_sqlExecuteRoutine (
-		schema + '.' + camelToSnakeCase(procName) : 
+		getSpecificName ( schema : procName) : 
 		pPayload : 
-		JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR
+		JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR:
+		*ON // Specific 
 	);
 
 	//	if json_Error(pResponse);
@@ -244,6 +245,53 @@ on-exit;
 
 end-proc;
 
+// ------------------------------------------------------------------------------------
+// get Specific Name by filter the name 
+// ------------------------------------------------------------------------------------
+dcl-proc getSpecificName;
+
+	dcl-pi *n varchar(128);
+		schema  varchar(64) value ;
+		routine varchar(128) value ;
+	end-pi;
+
+	dcl-s functionType 	char(1);	
+	dcl-s routineType 	char(10);	
+	dcl-s specificName  varchar(128);
+
+ 	routine = strUpper(camelToSnakeCase (routine));
+	schema  = strUpper(camelToSnakeCase (schema));
+
+	if %subst(routine: %len(routine) - 4) = 'TABLE';
+		functionType  = 'F';
+		routineType  = 'FUNCTION';
+		routine = %subst ( routine : 1: %len(routine) - 6);
+	elseif %subst(routine: %len(routine) - 5) = 'SCALAR';
+		functionType  = 'S';
+		routineType  = 'FUNCTION';
+		routine = %subst ( routine : 1: %len(routine) - 7);
+	elseif %subst(routine: %len(routine) - 8) = 'PROCEDURE';
+		functionType  = ' ';
+		routine = %subst ( routine : 1: %len(routine) - 9);
+		routineType  = 'PROCEDURE';
+	else; 
+		functionType  = '?';
+		routine = '????';
+	endif;
+
+	exec sql 
+		select specific_name  
+		into   :specificName
+		from   qsys2.sysroutines
+		where  routine_schema = upper(:schema) 
+		and routine_type      = :routineType 
+		and    routine_name   = :routine
+		and    function_type  = :functionType;
+
+
+	return schema + '.' + specificName;
+end-proc;
+	
 /* -------------------------------------------------------------------- *\ 
    JSON error monitor 
 \* -------------------------------------------------------------------- */
@@ -362,14 +410,16 @@ dcl-proc reorderResultAsTree;
 		pRoutines  pointer value;
 	end-pi;
 
-	dcl-ds iterList  likeds(json_iterator);  
-	dcl-s  pTree     pointer;
-	dcl-s  pRoutine  pointer;
-	dcl-s  pParms    pointer;
-	dcl-s  Schema    varchar(64);
-	dcl-s  Routine 	 varchar(128);
-	dcl-s prevSchemaRoutine varchar(256);
-	dcl-s schemaRoutine varchar(256);
+	dcl-ds iterList  		 likeds(json_iterator);  
+	dcl-s  pTree     		 pointer;
+	dcl-s  pRoutine  		 pointer;
+	dcl-s  pParms    		 pointer;
+	dcl-s  Schema    		 varchar(64);
+	dcl-s  Routine 	 		 varchar(128);
+	dcl-s  RoutineType 		 varchar(10);
+	dcl-s  PrevRoutineType 	 varchar(10);
+	dcl-s  prevSchemaRoutine varchar(256);
+	dcl-s  schemaRoutine 	 varchar(256);
 
 	pTree  = json_newArray ();
 
@@ -380,13 +430,16 @@ dcl-proc reorderResultAsTree;
 		schema =  snakeToCamelCase (json_getStr (iterList.this:'specific_schema'));
 		routine = snakeToCamelCase (json_getStr (iterList.this:'routine_name')); 
 		SchemaRoutine =  schema + '/' + routine;
+		routineType = json_getStr(iterList.this: 'routine_type' );
 
-		if  schemaRoutine <> prevSchemaRoutine;
+		if  schemaRoutine <> prevSchemaRoutine
+		or  routineType   <> prevRoutineType;
 			prevSchemaRoutine = SchemaRoutine;
+			prevRoutineType =  routineType;
 			pRoutine = json_newObject();
 			json_setStr  (pRoutine : 'schema' :schema );
 			json_setStr  (pRoutine : 'routine':routine );
-			json_setStr  (pRoutine : 'routine_type': json_getStr(iterList.this: 'routine_type' ));
+			json_setStr  (pRoutine : 'routine_type': routineType);
 			json_setStr  (pRoutine : 'description' : json_getStr(iterList.this: 'desc')) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
@@ -429,6 +482,8 @@ dcl-proc buildSwaggerJson;
 	dcl-s ref   		varchar(10) inz('$ref');
 	dcl-s Schema   		varchar(64);
 	dcl-s Routine 		varchar(64);
+	dcl-s RoutineType 	varchar(10);
+	dcl-s RoutineTypeNc varchar(10);
 	dcl-s resultSets    int(5);
 	dcl-s OutputReference varchar(256);
 
@@ -488,30 +543,33 @@ dcl-proc buildSwaggerJson;
 
 		schema =  json_getStr(iterList.this:'schema');
 		routine = json_getStr(iterList.this:'routine'); 
+		routinetype = json_getStr (iterList.this:'routine_type');
+		routinetypeNc = NameCase (routinetype);
+
 
 		resultSets  = json_getInt(iterList.this:'result_sets');
 		if resultSets >= 1;
 			OutputReference = '"$ref":"#/definitions/ApiResponse"';
 		else;
-			OutputReference = '"$ref":"#/components/schemas/' + routine + 'Output"';	
+			OutputReference = '"$ref":"#/components/schemas/' + routine + 'Output' + routinetypeNc+ '"';	
 		endif; 
 
 
 		pRoute = json_newObject();
-		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine);
+		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine + routinetypeNc);
 
 		pMethod = json_parseString(
 		`{
 			"tags": [
 				"${schema}"
 			],
-			"operationId": "${routine}",
+			"operationId": "${routine}${routineTypeNc}",
 			"summary": "${  json_getStr(iterList.this:'description') }",
 			"requestBody": {
 				"content": {
 					"application/json": {
 						"schema": {
-							"${ref}": "#/components/schemas/${routine}Input"
+							"${ref}": "#/components/schemas/${routine}Input${routineTypeNc}"
 						}
 					}
 				},
@@ -565,8 +623,8 @@ dcl-proc buildSwaggerJson;
 		endif;
 
 
-		if json_getStr (iterList.this:'routine_type') = 'SCALAR' // scalar
-		or json_getStr (iterList.this:'routine_type') = 'TABLE' // table
+		if routinetype = 'SCALAR' // scalar
+		or routinetype = 'TABLE' // table
 		or resultSets >= 1;                                  // Procedure with result set (open cursor)  
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
@@ -582,11 +640,11 @@ dcl-proc buildSwaggerJson;
 			enddo;
 
 
-			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' : json_newObject() ); 
+			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
 			json_setStr(pParmsOutput : 'type' : 'object');
 			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
-			if json_getStr (iterList.this:'routine_type') = 'SCALAR'; // scalar
+			if routinetype = 'SCALAR'; // scalar
 
 				pParm = json_newObject(); 
 				json_noderename (pParm : 'success' );
@@ -617,12 +675,12 @@ dcl-proc buildSwaggerJson;
 			json_moveobjectinto  ( pRoute  :  'post'  : pMethod ); 
 			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 
-			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' : json_newObject() ); 
+			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' + routinetypenc  : json_newObject() ); 
 			json_setStr(pParmsInput : 'type' : 'object');
 			pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
 			if resultSets = 0;
-				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' : json_newObject() ); 
+				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
 				json_setStr(pParmsOutput : 'type' : 'object');
 				pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 			endif;
