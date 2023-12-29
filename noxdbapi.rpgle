@@ -166,6 +166,7 @@ dcl-proc serveProcedureResponse ;
 	dcl-s value  		varchar(32760);
 	dcl-s parmList  	varchar(32760);
 	dcl-s sqlStmt   	varchar(32760);
+	dcl-s specificName  varchar(128);
 	dcl-s pRoutineMeta  pointer;
 	dcl-s len 			int(10);
 	dcl-ds iterParms  	likeds(json_iterator);
@@ -201,8 +202,10 @@ dcl-proc serveProcedureResponse ;
 
 	endif;
 
+	specificName = getSpecificName ( schema : procName) ;
+
 	pResponse = json_sqlExecuteRoutine (
-		getSpecificName ( schema : procName) : 
+		specificName : 
 		pPayload : 
 		JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR:
 		*ON // Specific 
@@ -263,7 +266,7 @@ dcl-proc getSpecificName;
 	schema  = strUpper(camelToSnakeCase (schema));
 
 	if %subst(routine: %len(routine) - 4) = 'TABLE';
-		functionType  = 'F';
+		functionType  = 'T';
 		routineType  = 'FUNCTION';
 		routine = %subst ( routine : 1: %len(routine) - 6);
 	elseif %subst(routine: %len(routine) - 5) = 'SCALAR';
@@ -272,7 +275,7 @@ dcl-proc getSpecificName;
 		routine = %subst ( routine : 1: %len(routine) - 7);
 	elseif %subst(routine: %len(routine) - 8) = 'PROCEDURE';
 		functionType  = ' ';
-		routine = %subst ( routine : 1: %len(routine) - 9);
+		routine = %subst ( routine : 1: %len(routine) - 10);
 		routineType  = 'PROCEDURE';
 	else; 
 		functionType  = '?';
