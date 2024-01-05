@@ -384,12 +384,18 @@ dcl-proc serveListSchemaProcs;
 			r.routine_name,
 			r.long_comment desc,
 			r.max_dynamic_result_sets,
-			p.*
+			p.*,
+			substr (m.long_comment , 9)  as methods
+
 		from routines r
 		join implementation i 
 			on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
 		left join sysparms p 
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
+		left join sysparms m 
+			on r.specific_schema = m.specific_schema
+            and r.specific_name = m.specific_name 
+            and m.long_comment like 'methods=%' 
 	    where i.number_of_implementations = 1
 		order by r.routine_schema , r.routine_name;
 	`);
@@ -446,8 +452,8 @@ dcl-proc reorderResultAsTree;
 			json_setStr  (pRoutine : 'description' : json_getStr(iterList.this: 'desc')) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
+			json_setStr  (pRoutine : 'methods' : json_getStr(iterList.this: 'methods')) ;
 			
-
 			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
 		endif;
@@ -489,6 +495,10 @@ dcl-proc buildSwaggerJson;
 	dcl-s RoutineTypeNc varchar(10);
 	dcl-s resultSets    int(5);
 	dcl-s OutputReference varchar(256);
+	dcl-s methods       varchar(256);
+	dcl-s method        varchar(16);
+	dcl-s w 			int(5);
+	dcl-s pCurMethod    pointer;
 
  
 	pOpenApi = json_parseString(`{
@@ -548,6 +558,7 @@ dcl-proc buildSwaggerJson;
 		routine = json_getStr(iterList.this:'routine'); 
 		routinetype = json_getStr (iterList.this:'routine_type');
 		routinetypeNc = NameCase (routinetype);
+		methods  = json_getStr ( iterList.this:'methods');
 
 
 		resultSets  = json_getInt(iterList.this:'result_sets');
@@ -627,8 +638,8 @@ dcl-proc buildSwaggerJson;
 
 
 		if routinetype = 'SCALAR' // scalar
-		or routinetype = 'TABLE' // table
-		or resultSets >= 1;                                  // Procedure with result set (open cursor)  
+		or routinetype = 'TABLE'  // table
+		or resultSets >= 1;       // Procedure with result set (open cursor)  
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
 			json_moveobjectinto  ( pRoute  :  'get'  : pMethod ); 
@@ -672,8 +683,42 @@ dcl-proc buildSwaggerJson;
 					endif;
 				enddo;
 			endif;
-		else;	
+		// Procedures with multiple methods	
+		elseif methods > '';	
 
+			for w = 1 to words ( methods : ',');
+				method = word ( methods : w : ',' );
+				pCurMethod = json_nodeClone (pMethod);
+
+				json_moveobjectinto  ( pRoute  :  strLower(method)  : pCurMethod ); 
+				json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+
+				pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' + routinetypenc  : json_newObject() ); 
+				json_setStr(pParmsInput : 'type' : 'object');
+				pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+				if resultSets = 0;
+					pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
+					json_setStr(pParmsOutput : 'type' : 'object');
+					pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+				endif;
+
+				iterParms = json_setIterator(iterList.this:'parms');  
+				dow json_ForEach(iterParms) ;  
+					if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
+					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+						json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+					if resultSets = 0;
+						if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
+						or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+							json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+						endif;
+					endif;
+				enddo;
+			endfor;
+			json_delete (pMethod);
+		else;	
 
 			json_moveobjectinto  ( pRoute  :  'post'  : pMethod ); 
 			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
