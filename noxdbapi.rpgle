@@ -101,11 +101,15 @@ dcl-proc main;
 
 	if  schemaName = 'openapi-meta';
 		// The envvar is set in the "webconfig.xml" file. The "envvar" tag
-		serveListSchemaProcs (environment : getenvvar('NOXDBAPI_EXPOSE_SCHEMAS')); 
+		serveListSchemaProcs (
+			environment : 
+			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
+			getenvvar('NOXDBAPI_EXPOSE_ROUTINES')
+		); 
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
 	else;
-		serveProcedureResponse (environment : schemaName : procName);
+		serveProcedureResponse (environment : schemaName : procName : getenvvar('NOXDBAPI_EXPOSE_ROUTINES'));
 	endif; 
 
 
@@ -154,11 +158,11 @@ end-proc;
 dcl-proc serveProcedureResponse ;	
 
 	dcl-pi *n;
-		environment  varchar(64);
-		schema       varchar(64);
-		procName     varchar(128);
+		environment     varchar(64);
+		schema          varchar(64);
+		procName        varchar(128);
+		exposeRoutines  varchar(256) const options(*varsize);
 	end-pi;
-	
 	dcl-s pResponse		pointer;		
 	dcl-s msg 			varchar(512);	
 	dcl-s pPayload      pointer;	
@@ -172,12 +176,10 @@ dcl-proc serveProcedureResponse ;
 	dcl-ds iterParms  	likeds(json_iterator);
 	dcl-ds iterList  	likeds(json_iterator);  
 	
-
 	SetContentType ('application/json;charset=UTF-8');
 
-
 	if schema <= '';
-		pResponse =FormatError (
+		pResponse = FormatError (
 			'Need schema and procedure'
 		);
 		return;
@@ -199,10 +201,21 @@ dcl-proc serveProcedureResponse ;
 		dow json_ForEach(iterList) ;  
 			json_noderename (iterList.this : camelToSnakeCase ( json_getname (iterList.this) ));
 		enddo; 
+		// append or replace querystring parameters to payload object 
+		getQryStrList ( name : value : '*FIRST');
+		dow name > '';
+			json_setValue (pPayload : camelToSnakeCase(name) : value );
+			getQryStrList ( name : value : '*NEXT');
+		enddo;
 
 	endif;
 
-	specificName = getSpecificName ( schema : procName) ;
+	
+	if exposeRoutines = 'ANNOTATED';
+		specificName = getSpecificNameByAnnotations ( schema : procName) ;
+	else;
+		specificName = getSpecificName ( schema : procName) ;
+	endif;
 
 	pResponse = json_sqlExecuteRoutine (
 		specificName : 
@@ -286,7 +299,7 @@ dcl-proc getSpecificName;
 		select specific_name  
 		into   :specificName
 		from   qsys2.sysroutines
-		where  routine_schema = upper(:schema) 
+		where  routine_schema = :schema 
 		and routine_type      = :routineType 
 		and    routine_name   = :routine
 		and    function_type  = :functionType;
@@ -295,6 +308,34 @@ dcl-proc getSpecificName;
 	return schema + '.' + specificName;
 end-proc;
 	
+// ------------------------------------------------------------------------------------
+// get Specific Name by annotations 
+// ------------------------------------------------------------------------------------
+dcl-proc getSpecificNameByAnnotations;
+
+	dcl-pi *n varchar(128);
+		schema  varchar(64) value ;
+		routine varchar(128) value ;
+	end-pi;
+
+	dcl-s functionType 	char(1);	
+	dcl-s routineType 	char(10);	
+	dcl-s method  	    varchar(10);	
+	dcl-s specificName  varchar(128);
+
+	method = getServerVar('REQUEST_METHOD');
+	schema  = strUpper(camelToSnakeCase (schema));
+
+	exec sql 
+		select specific_name  
+		into   :specificName
+		from   qsys2.sysroutines
+		where  routine_schema = :schema 
+		and    long_comment like '%@Method=' || :method || '%'
+		and    long_comment like '%@Endpoint=' || :routine  || '%';
+
+	return schema + '.' + specificName;
+end-proc;
 /* -------------------------------------------------------------------- *\ 
    JSON error monitor 
 \* -------------------------------------------------------------------- */
@@ -339,8 +380,9 @@ end-proc;
 dcl-proc serveListSchemaProcs;
 
 	dcl-pi *n;
-		environment 	varchar(64) const options(*varsize);
+		environment 	varchar(64)  const options(*varsize);
 		schemaNameList 	varchar(256) const options(*varsize);
+		exposeRoutines  varchar(256) const options(*varsize);
 	end-pi;
 
 	dcl-s pResult      	pointer; 
@@ -351,26 +393,31 @@ dcl-proc serveListSchemaProcs;
 	dcl-s  prevSchema   varchar(64);
 	dcl-s  prevRoutine 	varchar(64);
 	dcl-s  schemaList   varchar(256);
+	dcl-s  filterAnnotated varchar(64);
 
 	// Convert the list to SQL format of "IN" 
 	schemaList = '''' + %scanrpl (',':''',''': schemaNameList) + '''';
+	
+	if exposeRoutines = 'ANNOTATED';
+		filterAnnotated = ' and r.long_comment like ''%@Method%'' ';
+	endif;
 
 	pResult = json_sqlResultSet (`
 		with 
 			routines as ( 
 				select 
-				case function_type
-					when 'S' then 'SCALAR'
-					when 'T' then 'TABLE'
-					else          'PROCEDURE'
-				end routine_type,
-				routine_schema , 
-				routine_name, 
-                specific_schema,
-				specific_name, 
-				long_comment,
-				max_dynamic_result_sets
-				from sysroutines 
+					case function_type
+						when 'S' then 'SCALAR'
+						when 'T' then 'TABLE'
+						else          'PROCEDURE'
+					end routine_type,
+					routine_schema , 
+					routine_name, 
+					specific_schema,
+					specific_name, 
+					long_comment,
+					max_dynamic_result_sets
+					from sysroutines 
 				where routine_schema in (${schemaList}) 
 			), 
 			implementation as ( 
@@ -384,19 +431,14 @@ dcl-proc serveListSchemaProcs;
 			r.routine_name,
 			r.long_comment desc,
 			r.max_dynamic_result_sets,
-			p.*,
-			substr (m.long_comment , 9)  as methods
-
+			p.*
 		from routines r
 		join implementation i 
 			on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
 		left join sysparms p 
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
-		left join sysparms m 
-			on r.specific_schema = m.specific_schema
-            and r.specific_name = m.specific_name 
-            and m.long_comment like 'methods=%' 
 	    where i.number_of_implementations = 1
+		${filterAnnotated}
 		order by r.routine_schema , r.routine_name;
 	`);
 
@@ -452,7 +494,7 @@ dcl-proc reorderResultAsTree;
 			json_setStr  (pRoutine : 'description' : json_getStr(iterList.this: 'desc')) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
-			json_setStr  (pRoutine : 'methods' : json_getStr(iterList.this: 'methods')) ;
+			parseAnnotations (pRoutine : json_getStr( iterList.this : 'desc')) ;
 			
 			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
@@ -464,7 +506,6 @@ dcl-proc reorderResultAsTree;
 
 
 end-proc;
-
 // --------------------------------------------------------------------  
 dcl-proc buildSwaggerJson;
 
@@ -497,8 +538,9 @@ dcl-proc buildSwaggerJson;
 	dcl-s OutputReference varchar(256);
 	dcl-s methods       varchar(256);
 	dcl-s method        varchar(16);
-	dcl-s w 			int(5);
-	dcl-s pCurMethod    pointer;
+	dcl-s endpoint      varchar(256);
+	dcl-s pathName      varchar(256);
+	dcl-s pAnnotations  pointer;
 
  
 	pOpenApi = json_parseString(`{
@@ -557,33 +599,52 @@ dcl-proc buildSwaggerJson;
 		schema =  json_getStr(iterList.this:'schema');
 		routine = json_getStr(iterList.this:'routine'); 
 		routinetype = json_getStr (iterList.this:'routine_type');
+		pAnnotations = json_locate (iterList.this:'annotations');
 		routinetypeNc = NameCase (routinetype);
-		methods  = json_getStr ( iterList.this:'methods');
-
+		endpoint = json_getstr ( pAnnotations : 'endpoint');
+		if endpoint <= ''; 
+			endpoint = routine + routinetypeNc;
+		endif;
+		method = strLower(json_getstr ( pAnnotations : 'method'));
+		if method <= '';
+			if routinetype = 'SCALAR' // scalar
+			or routinetype = 'TABLE'  // table
+			or resultSets >= 1;       // Procedure with result set (open cursor)  
+				method = 'get';
+			else;
+				method = 'post';
+			endif;
+		endif;
 
 		resultSets  = json_getInt(iterList.this:'result_sets');
 		if resultSets >= 1;
 			OutputReference = '"$ref":"#/definitions/ApiResponse"';
 		else;
-			OutputReference = '"$ref":"#/components/schemas/' + routine + 'Output' + routinetypeNc+ '"';	
+			OutputReference = '"$ref":"#/components/schemas/' + routine + method + 'Output' + routinetypeNc+ '"';	
 		endif; 
 
 
-		pRoute = json_newObject();
-		json_noderename (pRoute : '/' + environment + '/' + schema + '/' + routine + routinetypeNc);
+		// When the endpoint exists - we just append each method
+		pathName = '/' + environment + '/' + schema + '/' + endpoint;
+		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
+		if pRoute = *NULL; 
+			pRoute = json_newObject();
+			json_noderename (pRoute : '/' + environment + '/' + schema + '/' + endpoint);
+			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+		endif;
 
 		pMethod = json_parseString(
 		`{
 			"tags": [
 				"${schema}"
 			],
-			"operationId": "${routine}${routineTypeNc}",
+			"operationId": "${endpoint}",
 			"summary": "${  json_getStr(iterList.this:'description') }",
 			"requestBody": {
 				"content": {
 					"application/json": {
 						"schema": {
-							"${ref}": "#/components/schemas/${routine}Input${routineTypeNc}"
+							"${ref}": "#/components/schemas/${routine}${method}Input${routineTypeNc}"
 						}
 					}
 				},
@@ -630,20 +691,17 @@ dcl-proc buildSwaggerJson;
 				}
 			}
 		}`);	
+
 		if json_getInt (iterList.this : 'implementations') > 1;
 			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
 				json_getStr (iterList.this : 'implementations') + 
 				' implementations and can not be executed. Can not decide which to use'); 
 		endif;
 
-
-		if routinetype = 'SCALAR' // scalar
-		or routinetype = 'TABLE'  // table
-		or resultSets >= 1;       // Procedure with result set (open cursor)  
+		if method = 'get';
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
 			json_moveobjectinto  ( pRoute  :  'get'  : pMethod ); 
-			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 			pParameters = json_moveobjectinto ( pRoute : 'parameters': json_newArray());
 
 			iterParms = json_setIterator(iterList.this:'parms');  
@@ -654,7 +712,7 @@ dcl-proc buildSwaggerJson;
 			enddo;
 
 
-			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
+			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
 			json_setStr(pParmsOutput : 'type' : 'object');
 			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
@@ -683,52 +741,16 @@ dcl-proc buildSwaggerJson;
 					endif;
 				enddo;
 			endif;
-		// Procedures with multiple methods	
-		elseif methods > '';	
-
-			for w = 1 to words ( methods : ',');
-				method = word ( methods : w : ',' );
-				pCurMethod = json_nodeClone (pMethod);
-
-				json_moveobjectinto  ( pRoute  :  strLower(method)  : pCurMethod ); 
-				json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
-
-				pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' + routinetypenc  : json_newObject() ); 
-				json_setStr(pParmsInput : 'type' : 'object');
-				pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
-
-				if resultSets = 0;
-					pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
-					json_setStr(pParmsOutput : 'type' : 'object');
-					pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-				endif;
-
-				iterParms = json_setIterator(iterList.this:'parms');  
-				dow json_ForEach(iterParms) ;  
-					if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
-					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-						json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-					if resultSets = 0;
-						if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
-						or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-							json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-						endif;
-					endif;
-				enddo;
-			endfor;
-			json_delete (pMethod);
 		else;	
 
-			json_moveobjectinto  ( pRoute  :  'post'  : pMethod ); 
-			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+			json_moveobjectinto  ( pRoute  :  method  : pMethod ); 
 
-			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + 'Input' + routinetypenc  : json_newObject() ); 
+			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Input' + routinetypenc  : json_newObject() ); 
 			json_setStr(pParmsInput : 'type' : 'object');
 			pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
 			if resultSets = 0;
-				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + 'Output' + routinetypenc  : json_newObject() ); 
+				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
 				json_setStr(pParmsOutput : 'type' : 'object');
 				pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 			endif;
@@ -1087,5 +1109,50 @@ dcl-proc parameterDescription ;
 		description = 	json_getStr ( pMetaParm : 'long_comment');
 	endif; 
 	return description;
+
+end-proc;
+// ------------------------------------------------------------------------------------
+// Parse Annotations
+// The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+// The annotation @Endpoint is the name of the endpoint
+// comment on procedure corpdata.employee_set is 'Update Employee information @Method=PATCH @Endpoint=employee';
+// ------------------------------------------------------------------------------------
+dcl-proc parseAnnotations;
+
+	dcl-pi parseAnnotations ;
+		pRoutine     pointer value;
+		description  varchar(1000) const;
+	end-pi;
+
+	dcl-s pAnnotations pointer;
+	dcl-s at	int(5);
+	dcl-s eq	int(5);
+	dcl-s end   int(5);
+	dcl-s st 	int(5) inz(1);
+	dcl-s value	varchar(256);
+	dcl-s annotation	varchar(256);
+
+	pAnnotations = json_newObject();
+
+	dou at = 0 or eq = 0;
+		at = %scan ('@' : description : st);
+		if  at > 0; 
+			eq = %scan ('=' : description : at);
+			if eq > 0;
+				annotation = %subst(description : at +1 : eq - at -1 );
+				end = %scan (' ' : description : eq);
+				if  end > 0;
+					value  = %subst(description : eq +1 : end - eq -1 );
+					st = end;
+				else;
+					value  = %subst(description : eq +1);
+					st = %len(description);
+				endif; 
+				json_setStr ( pAnnotations : annotation : value);
+			endif;
+		endif;
+	enddo;
+
+	json_moveobjectinto  ( pRoutine  :  'annotations' : pAnnotations ); 
 
 end-proc;

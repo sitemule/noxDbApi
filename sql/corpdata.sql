@@ -158,121 +158,140 @@ call corpdata.employee_info (
 
 
 
+select *
+from   corpdata.employee;
+
 ----------------------------------------------------------------------
 -- Example 4:
--- Employee as a CRUD procedure 
+-- Employee as a annotaded procedure 
 ----------------------------------------------------------------------
-    select *
-    from   corpdata.employee;
+-- Procedure used for GET 
 
-create or replace procedure  corpdata.employee_crud  (
-    in method varchar(10) default 'GET',  
-    inout empno character(6) default null,
-    inout firstnme varchar(12) default null,
-    inout midinit character(1) default null,
-    inout lastname varchar(15) default null,
-    inout workdept character(3) default null,
-    inout phoneno character(4) default null,
-    inout hiredate date default null,
-    inout job character(8) default null,
-    inout edlevel smallint default null,
-    inout sex character(1) default null,
-    inout birthdate date default null,
-    inout salary decimal(9, 2) default null,
-    inout bonus decimal(9, 2) default null,
-    inout comm decimal(9, 2 ) default null
+create or replace procedure  corpdata.employee_get  (
+    in empno character(6) ,
+    out firstnme varchar(12) ,
+    out midinit character(1) ,
+    out lastname varchar(15) ,
+    out workdept character(3) ,
+    out phoneno character(4) ,
+    out hiredate date ,
+    out job character(8) ,
+    out edlevel smallint ,
+    out sex character(1) ,
+    out birthdate date ,
+    out salary decimal(9, 2) ,
+    out bonus decimal(9, 2) ,
+    out comm decimal(9, 2 ) 
 )
     language sql 
-    specific emplcrud
     no external action 
     set option output=*print, commit=*none, dbgview = *list
 
 begin
     declare sqlcode int;
     declare message varchar(512);
-    case
-        when method = 'GET' then
-            select
-                empno,
-                firstnme,
-                midinit,
-                lastname,
-                workdept,
-                phoneno,
-                hiredate,
-                job,
-                edlevel,
-                sex,
-                birthdate,
-                salary,
-                bonus,
-                comm
-            into
-                employee_crud.empno,
-                employee_crud.firstnme,
-                employee_crud.midinit,
-                employee_crud.lastname,
-                employee_crud.workdept,
-                employee_crud.phoneno,
-                employee_crud.hiredate,
-                employee_crud.job,
-                employee_crud.edlevel,
-                employee_crud.sex,
-                employee_crud.birthdate,
-                employee_crud.salary,
-                employee_crud.bonus,
-                employee_crud.comm
-            from  corpdata.employee a
-            where empno = employee_crud.empno;
-            
-            if  sqlcode <> 0 then
-                signal sqlstate 'USR01' set message_text = 'Row does not exists ' , column_name = 'empno';
-            end if;
+    select
+        empno,
+        firstnme,
+        midinit,
+        lastname,
+        workdept,
+        phoneno,
+        hiredate,
+        job,
+        edlevel,
+        sex,
+        birthdate,
+        salary,
+        bonus,
+        comm
+    into
+        employee_get.empno,
+        employee_get.firstnme,
+        employee_get.midinit,
+        employee_get.lastname,
+        employee_get.workdept,
+        employee_get.phoneno,
+        employee_get.hiredate,
+        employee_get.job,
+        employee_get.edlevel,
+        employee_get.sex,
+        employee_get.birthdate,
+        employee_get.salary,
+        employee_get.bonus,
+        employee_get.comm
+    from  corpdata.employee a
+    where empno = employee_get.empno;
+    
+    if  sqlcode <> 0 then
+        set message = 'Row does not exists for employee ' || empno;
+        signal sqlstate 'USR01' set message_text = message , column_name = 'empno';
+    end if;
 
-
-
-        when method = 'PATCH' then
-            update corpdata.employee 
-            set
-                empno       = employee_crud.empno,
-                firstnme    = employee_crud.firstnme,
-                midinit     = employee_crud.midinit,
-                lastname    = employee_crud.lastname,
-                workdept    = employee_crud.workdept,
-                phoneno     = employee_crud.phoneno,
-                hiredate    = employee_crud.hiredate,
-                job         = employee_crud.job,
-                edlevel     = employee_crud.edlevel,
-                sex         = employee_crud.sex,
-                birthdate   = employee_crud.birthdate,
-                salary      = employee_crud.salary,
-                bonus       = employee_crud.bonus,
-                comm        = employee_crud.comm
-            where empno = employee_crud.empno;
-           
-            if  sqlcode <> 0 then
-                signal sqlstate 'USR01' set message_text = 'Row not updated' , column_name = 'empno';
-            end if;
-           
-        else
-            set message = 'Method ' concat  method concat  ' is not supported';
-            signal sqlstate 'USR01' set message_text = message , column_name = 'method';
-     end case;
 end;    
 
--- The parameter description will be visible in the openAPI( swagger) user interface: 
-comment on procedure corpdata.employee_crud is 'Employee CRUD information';
+-- The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+-- The annotation @Endpoint is the name of the endpoint
+comment on procedure corpdata.employee_get is 'Retrive Employee information @Method=GET @Endpoint=employee';
 
--- The 'methods=' causes noxDbApi to expose these methods in openAPI / Swagger 
--- Also - pass this parameter (what ever name) with the HTTP method used.
--- Also - leave the parameter out from the openAPI / Swagger definition  
-comment on parameter corpdata.employee_crud.method is 'methods=GET,PATCH';
+----------------------------------------------------------------------------------------------------
+-- The procedure used for PATCH 
+create or replace procedure  corpdata.employee_set  (
+    in empno character(6) ,
+    in firstnme varchar(12) ,
+    in midinit character(1) ,
+    in lastname varchar(15) ,
+    in workdept character(3) ,
+    in phoneno character(4) ,
+    in hiredate date ,
+    in job character(8) ,
+    in edlevel smallint ,
+    in sex character(1) ,
+    in birthdate date ,
+    in salary decimal(9, 2) ,
+    in bonus decimal(9, 2) ,
+    in comm decimal(9, 2 ) 
+)
+    language sql 
+    no external action 
+    set option output=*print, commit=*none, dbgview = *list
+
+begin
+    declare sqlcode int;
+    declare message varchar(512);
+    update corpdata.employee 
+    set
+        empno       = employee_set.empno,
+        firstnme    = employee_set.firstnme,
+        midinit     = employee_set.midinit,
+        lastname    = employee_set.lastname,
+        workdept    = employee_set.workdept,
+        phoneno     = employee_set.phoneno,
+        hiredate    = employee_set.hiredate,
+        job         = employee_set.job,
+        edlevel     = employee_set.edlevel,
+        sex         = employee_set.sex,
+        birthdate   = employee_set.birthdate,
+        salary      = employee_set.salary,
+        bonus       = employee_set.bonus,
+        comm        = employee_set.comm
+    where empno = employee_set.empno;
+    
+    if  sqlcode <> 0 then
+        set message = 'Row does not exists for employee ' || empno;
+        signal sqlstate 'USR01' set message_text = message , column_name = 'empno';
+    end if;
+    
+end;    
+
+-- The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+-- The annotation @Endpoint is the name of the endpoint
+comment on procedure corpdata.employee_set is 'Update Employee information @Method=PATCH @Endpoint=employee';
 
 
 
--- This willl silently use the GET method in the CRUD procedure:
-call corpdata.employee_crud ( 
-    method => 'GET',
+-- Test the two procedures for get and set:
+call corpdata.employee_get ( 
     empno => '000050',
     firstnme => ?,
     midinit => ?,
@@ -289,8 +308,7 @@ call corpdata.employee_crud (
     comm => ?
 );  
 
-call corpdata.employee_crud ( 
-    method => 'PATCH',
+call corpdata.employee_set ( 
     empno => '000050',
     firstnme => 'JOHN',
     midinit => 'B',
@@ -307,8 +325,7 @@ call corpdata.employee_crud (
     comm => 3214.00
 );  
 -- does not exists
-call corpdata.employee_crud ( 
-    method => 'GET',
+call corpdata.employee_get ( 
     empno => '999999',
     firstnme => ?,
     midinit => ?,
@@ -326,26 +343,9 @@ call corpdata.employee_crud (
 );  
 
 
--- POST is not suppported 
-call corpdata.employee_crud ( 
-    method => 'POST',
-    empno => '000050',
-    firstnme => ?,
-    midinit => ?,
-    lastname => ?,
-    workdept => ?,
-    phoneno => ?,
-    hiredate => ?,
-    job => ?,
-    edlevel => ?,
-    sex => ?,
-    birthdate => ?,
-    salary => ?,
-    bonus => ?,
-    comm => ?
-);  
+  
 
-    select *
-    from   corpdata.employee
-    where empno = '000050';
+select *
+from   corpdata.employee
+where empno = '000050';
  
