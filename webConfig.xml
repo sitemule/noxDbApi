@@ -79,6 +79,7 @@
 
 	<envvar>
 		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="CORPDATA"/>
+		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
 		<var name="YYYNOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI,UDTFDEMO,QSYS2"/>
 		<var name="YYYNOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI"/>
 	</envvar>

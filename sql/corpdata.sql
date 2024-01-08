@@ -1,11 +1,30 @@
-﻿-- This examples uses IBM corpdata sample database (corpdata) as data provider
+﻿/* --------------------------------------------------------
+
+
+    This examples illustrates how to secure expose a scema
+    using IBM corpdata sample database (corpdata) as data provider
+
+    Here we uses the ANNOTATED settings in the webconfig
+    that cause only routines with a @Method and @Endpoint 
+    annotation will be exposed as services: 
+    
+    You have to set the webconfig like this:  
+     
+	<envvar>
+		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="CORPDATA"/>
+		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
+	</envvar>
+
+*/
+
+-- First build the sample schema:
+
 call qsys.create_sql_sample('CORPDATA');
 
 -- We can then play with these;
 select * from systables where table_schema= 'CORPDATA';
  
-     select *
-    from   corpdata.employee;
+select * from corpdata.employee;
 
 
 ----------------------------------------------------------------
@@ -30,7 +49,7 @@ begin
 end;
 
 -- The parameter description will be visible in the openAPI( swagger) user interface: 
-comment on procedure corpdata.employee_list is 'Employee List';
+comment on procedure corpdata.employee_list is 'Employee List @Method=GET @Endpoint=employees';
 comment on parameter corpdata.employee_list (employee_search_name is 'Search Employee List by name');
  
 -- Test if the procedure works in ACS:
@@ -71,7 +90,7 @@ begin
 end; 
 
 -- The parameter description will be visible in the openAPI( swagger) user interface: 
-comment on function corpdata.department_list is 'Departments';
+comment on function corpdata.department_list is 'Departments @Method=GET @Endpoint=departments';
 comment on parameter function corpdata.department_list (search_department_name is 'Search departments by name');
 
 select * from table( corpdata.department_list (search_department_name => 'branch'));
@@ -98,7 +117,7 @@ begin
 end; 
 
 -- The parameter description will be visible in the openAPI( swagger) user interface: 
-comment on function corpdata.administrating_department_for_id is 'Returns the administration department id for an department id ';
+comment on function corpdata.administrating_department_for_id is 'Returns the administration department id for an department id @Method=GET @Endpoint=departmentAdmin';
 comment on parameter corpdata.administrating_department_for_id (department_ID is 'department ID');
 
 -- Test if the procedure works in ACS:
@@ -108,7 +127,7 @@ values corpdata.administrating_department_for_id  ( department_ID => 'XYZ'); -- 
 
 
 ----------------------------------------------------------------------
--- Direct Call procedure
+-- Direct Call procedure, not here we join stuff together
     select *
     from   corpdata.employee;
 
@@ -143,7 +162,7 @@ begin
 end; 
 
 -- The parameter description will be visible in the openAPI( swagger) user interface: 
-comment on procedure corpdata.employee_info is 'Employee information';
+comment on procedure corpdata.employee_info is 'Employee information @Method=GET @Endpoint=employeeInfo';
 comment on parameter corpdata.employee_info (employee_id is 'Employee id');
 
 -- Test if the procedure works in ACS:
@@ -165,9 +184,9 @@ from   corpdata.employee;
 -- Example 4:
 -- Employee as a annotaded procedure 
 ----------------------------------------------------------------------
--- Procedure used for GET 
+-- Procedure used for fetch on e row  
 
-create or replace procedure  corpdata.employee_get  (
+create or replace procedure  corpdata.employee_fetch  (
     in empno character(6) ,
     out firstnme varchar(12) ,
     out midinit character(1) ,
@@ -206,22 +225,22 @@ begin
         bonus,
         comm
     into
-        employee_get.empno,
-        employee_get.firstnme,
-        employee_get.midinit,
-        employee_get.lastname,
-        employee_get.workdept,
-        employee_get.phoneno,
-        employee_get.hiredate,
-        employee_get.job,
-        employee_get.edlevel,
-        employee_get.sex,
-        employee_get.birthdate,
-        employee_get.salary,
-        employee_get.bonus,
-        employee_get.comm
+        employee_fetch.empno,
+        employee_fetch.firstnme,
+        employee_fetch.midinit,
+        employee_fetch.lastname,
+        employee_fetch.workdept,
+        employee_fetch.phoneno,
+        employee_fetch.hiredate,
+        employee_fetch.job,
+        employee_fetch.edlevel,
+        employee_fetch.sex,
+        employee_fetch.birthdate,
+        employee_fetch.salary,
+        employee_fetch.bonus,
+        employee_fetch.comm
     from  corpdata.employee a
-    where empno = employee_get.empno;
+    where empno = employee_fetch.empno;
     
     if  sqlcode <> 0 then
         set message = 'Row does not exists for employee ' || empno;
@@ -230,13 +249,13 @@ begin
 
 end;    
 
--- The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+-- The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface: 
 -- The annotation @Endpoint is the name of the endpoint
-comment on procedure corpdata.employee_get is 'Retrive Employee information @Method=GET @Endpoint=employee';
+comment on procedure corpdata.employee_fetch is 'Retrive Employee information @Method=GET @Endpoint=employee';
 
 ----------------------------------------------------------------------------------------------------
 -- The procedure used for PATCH 
-create or replace procedure  corpdata.employee_set  (
+create or replace procedure  corpdata.employee_update  (
     in empno character(6) ,
     in firstnme varchar(12) ,
     in midinit character(1) ,
@@ -261,37 +280,37 @@ begin
     declare message varchar(512);
     update corpdata.employee 
     set
-        empno       = employee_set.empno,
-        firstnme    = employee_set.firstnme,
-        midinit     = employee_set.midinit,
-        lastname    = employee_set.lastname,
-        workdept    = employee_set.workdept,
-        phoneno     = employee_set.phoneno,
-        hiredate    = employee_set.hiredate,
-        job         = employee_set.job,
-        edlevel     = employee_set.edlevel,
-        sex         = employee_set.sex,
-        birthdate   = employee_set.birthdate,
-        salary      = employee_set.salary,
-        bonus       = employee_set.bonus,
-        comm        = employee_set.comm
-    where empno = employee_set.empno;
+        empno       = employee_update.empno,
+        firstnme    = employee_update.firstnme,
+        midinit     = employee_update.midinit,
+        lastname    = employee_update.lastname,
+        workdept    = employee_update.workdept,
+        phoneno     = employee_update.phoneno,
+        hiredate    = employee_update.hiredate,
+        job         = employee_update.job,
+        edlevel     = employee_update.edlevel,
+        sex         = employee_update.sex,
+        birthdate   = employee_update.birthdate,
+        salary      = employee_update.salary,
+        bonus       = employee_update.bonus,
+        comm        = employee_update.comm
+    where empno = employee_update.empno;
     
     if  sqlcode <> 0 then
         set message = 'Row does not exists for employee ' || empno;
         signal sqlstate 'USR01' set message_text = message , column_name = 'empno';
     end if;
     
-end;    
+end;
 
--- The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+-- The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface:
 -- The annotation @Endpoint is the name of the endpoint
-comment on procedure corpdata.employee_set is 'Update Employee information @Method=PATCH @Endpoint=employee';
+comment on procedure corpdata.employee_update is 'Update Employee information @Method=PATCH @Endpoint=employee';
 
 
 
 -- Test the two procedures for get and set:
-call corpdata.employee_get ( 
+call corpdata.employee_fetch ( 
     empno => '000050',
     firstnme => ?,
     midinit => ?,
@@ -308,7 +327,7 @@ call corpdata.employee_get (
     comm => ?
 );  
 
-call corpdata.employee_set ( 
+call corpdata.employee_update ( 
     empno => '000050',
     firstnme => 'JOHN',
     midinit => 'B',
@@ -325,7 +344,7 @@ call corpdata.employee_set (
     comm => 3214.00
 );  
 -- does not exists
-call corpdata.employee_get ( 
+call corpdata.employee_fetch ( 
     empno => '999999',
     firstnme => ?,
     midinit => ?,

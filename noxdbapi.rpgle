@@ -326,13 +326,17 @@ dcl-proc getSpecificNameByAnnotations;
 	method = getServerVar('REQUEST_METHOD');
 	schema  = strUpper(camelToSnakeCase (schema));
 
+	// Note: to make the endpoint unique:
+	// 1) a blank has to follow the method name 
+	// 2) The endpoint name has to terminate the textstring 
 	exec sql 
 		select specific_name  
 		into   :specificName
 		from   qsys2.sysroutines
 		where  routine_schema = :schema 
 		and    long_comment like '%@Method=' || :method || '%'
-		and    long_comment like '%@Endpoint=' || :routine  || '%';
+		and    ( long_comment like '%@Endpoint=' || :routine  || ' %'
+		  or     long_comment like '%@Endpoint=' || :routine  );
 
 	return schema + '.' + specificName;
 end-proc;
@@ -471,6 +475,7 @@ dcl-proc reorderResultAsTree;
 	dcl-s  PrevRoutineType 	 varchar(10);
 	dcl-s  prevSchemaRoutine varchar(256);
 	dcl-s  schemaRoutine 	 varchar(256);
+	dcl-s  description  	 varchar(2000);
 
 	pTree  = json_newArray ();
 
@@ -482,21 +487,22 @@ dcl-proc reorderResultAsTree;
 		routine = snakeToCamelCase (json_getStr (iterList.this:'routine_name')); 
 		SchemaRoutine =  schema + '/' + routine;
 		routineType = json_getStr(iterList.this: 'routine_type' );
+		description = json_getStr(iterList.this: 'desc');
 
 		if  schemaRoutine <> prevSchemaRoutine
 		or  routineType   <> prevRoutineType;
 			prevSchemaRoutine = SchemaRoutine;
 			prevRoutineType =  routineType;
 			pRoutine = json_newObject();
+			json_moveObjectInto  ( pRoutine  :  'annotations' : parseAnnotations ( description) );
 			json_setStr  (pRoutine : 'schema' :schema );
 			json_setStr  (pRoutine : 'routine':routine );
 			json_setStr  (pRoutine : 'routine_type': routineType);
-			json_setStr  (pRoutine : 'description' : json_getStr(iterList.this: 'desc')) ;
+			json_setStr  (pRoutine : 'description' : description ) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
-			parseAnnotations (pRoutine : json_getStr( iterList.this : 'desc')) ;
 			
-			pParms = json_moveobjectinto  ( pRoutine  :  'parms' : json_newArray() ); 
+			pParms = json_moveObjectInto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
 		endif;
 		json_arrayPush(pParms : iterList.this: JSON_COPY_CLONE);
@@ -529,7 +535,6 @@ dcl-proc buildSwaggerJson;
 	dcl-s pParameters 	pointer;
 	dcl-s pParmsInput 	pointer;
 	dcl-s pParmsOutput 	pointer;	
-	dcl-s ref   		varchar(10) inz('$ref');
 	dcl-s Schema   		varchar(64);
 	dcl-s Routine 		varchar(64);
 	dcl-s RoutineType 	varchar(10);
@@ -541,9 +546,162 @@ dcl-proc buildSwaggerJson;
 	dcl-s endpoint      varchar(256);
 	dcl-s pathName      varchar(256);
 	dcl-s pAnnotations  pointer;
+	dcl-s description varchar(1024);
 
- 
-	pOpenApi = json_parseString(`{
+
+	pOpenApi  =  openApiProlog();
+	
+	pPaths      = json_moveObjectInto  ( pOpenApi    : 'paths'      : json_newObject() ); 
+	pComponents = json_moveObjectInto  ( pOpenApi    : 'components' : json_newObject()); 
+	pSchemas    = json_moveObjectInto  ( pComponents : 'schemas'    : json_newObject()); 
+
+	// Now produce the openAPI JSON fro each routine 
+	iterList = json_setIterator(pRoutines);  
+	dow json_ForEach(iterList) ;  
+
+		schema =  json_getStr(iterList.this:'schema');
+		routine = json_getStr(iterList.this:'routine'); 
+		routinetype = json_getStr (iterList.this:'routine_type');
+		description = json_getStr (iterList.this:'description');
+
+		pAnnotations = json_locate (iterList.this:'annotations');
+		routinetypeNc = NameCase (routinetype);
+		endpoint = json_getstr ( pAnnotations : 'endpoint');
+		if endpoint <= ''; 
+			endpoint = routine + routinetypeNc;
+		endif;
+		method = strLower(json_getstr ( pAnnotations : 'method'));
+		if method <= '';
+			if routinetype = 'SCALAR' // scalar
+			or routinetype = 'TABLE'  // table
+			or resultSets >= 1;       // Procedure with result set (open cursor)  
+				method = 'get';
+			else;
+				method = 'post';
+			endif;
+		endif;
+
+		resultSets  = json_getInt(iterList.this:'result_sets');
+		if resultSets >= 1;
+			OutputReference = '"$ref":"#/definitions/ApiResponse"';
+		else;
+			OutputReference = '"$ref":"#/components/schemas/' + routine + method + 'Output' + routinetypeNc+ '"';	
+		endif; 
+
+		// When the endpoint exists - we just append each method
+		pathName = '/' + environment + '/' + schema + '/' + endpoint;
+		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
+		if pRoute = *NULL; 
+			pRoute = json_newObject();
+			json_noderename (pRoute : '/' + environment + '/' + schema + '/' + endpoint);
+			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+		endif;
+
+
+		pMethod = openApiMethod (
+			schema:
+			endpoint:
+			description:
+			routine:
+			method:
+			routineTypeNc:
+			OutputReference
+		);
+
+		if json_getInt (iterList.this : 'implementations') > 1;
+			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
+				json_getStr (iterList.this : 'implementations') + 
+				' implementations and can not be executed. Can not decide which to use'); 
+		endif;
+
+		if method = 'get';
+			json_delete ( json_locate(pMethod : 'requestBody'));
+
+			json_moveObjectInto  ( pRoute  :  'get'  : pMethod ); 
+			pParameters = json_moveObjectInto ( pRoute : 'parameters': json_newArray());
+
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  ;
+					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+				endif;
+			enddo;
+
+
+			pParmsOutput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
+			json_setStr(pParmsOutput : 'type' : 'object');
+			pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+
+			if routinetype = 'SCALAR'; // scalar
+
+				pParm = json_newObject(); 
+				json_noderename (pParm : 'success' );
+				json_setStr    (pParm : 'name'        : 'success');
+				json_setStr    (pParm : 'type'        : 'boolean');
+				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+				pParm = swaggerParm (
+					json_getChild( 
+						json_locate (iterList.this:'parms') 
+					)
+				);
+				json_noderename (pParm : 'result' );
+				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+
+			else;
+				iterParms = json_setIterator(iterList.this:'parms');  
+				dow json_ForEach(iterParms) ;  
+					if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
+						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+				enddo;
+			endif;
+		else;	
+
+			json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
+
+			pParmsInput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Input' + routinetypenc  : json_newObject() ); 
+			json_setStr(pParmsInput : 'type' : 'object');
+			pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+			if resultSets = 0;
+				pParmsOutput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
+				json_setStr(pParmsOutput : 'type' : 'object');
+				pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+			endif;
+
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
+				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				endif;
+				if resultSets = 0;
+					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
+					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+				endif;
+			enddo;
+		endif; 
+	enddo;	
+
+	json_moveObjectInto  ( pOpenApi  :  'definitions' : definitions()  ); 
+
+	return (pOpenApi);
+
+
+end-proc;
+// ------------------------------------------------------------------------------------
+// Open api prolog
+// ------------------------------------------------------------------------------------
+dcl-proc openApiProlog ;
+
+	dcl-pi *n pointer;
+	end-pi;
+
+	return  json_parseString(`{
 		"openapi": "3.0.1",
 		"info": {
 			"title": "${ getServerVar('SERVER_DESCRIPTION') }",
@@ -587,59 +745,32 @@ dcl-proc buildSwaggerJson;
 		]
 	}`);
 */ 
+end-proc;
 
-	pPaths      = json_moveobjectinto  ( pOpenApi    : 'paths'      : json_newObject() ); 
-	pComponents = json_moveobjectinto  ( pOpenApi    : 'components' : json_newObject()); 
-	pSchemas    = json_moveobjectinto  ( pComponents : 'schemas'    : json_newObject()); 
+// ------------------------------------------------------------------------------------
+// openApiMethod
+// ------------------------------------------------------------------------------------
+dcl-proc openApiMethod;
 
-	// Now produce the openAPI JSON fro each routine 
-	iterList = json_setIterator(pRoutines);  
-	dow json_ForEach(iterList) ;  
+	dcl-pi openApiMethod pointer;
+		schema varchar(32) const;
+		endpoint varchar(256) const;
+		description varchar(1024) const;
+		routine varchar(128) const;
+		method varchar(32) const;
+		routineTypeNc varchar(128) const;
+		OutputReference varchar(256) const;
+	end-pi;
 
-		schema =  json_getStr(iterList.this:'schema');
-		routine = json_getStr(iterList.this:'routine'); 
-		routinetype = json_getStr (iterList.this:'routine_type');
-		pAnnotations = json_locate (iterList.this:'annotations');
-		routinetypeNc = NameCase (routinetype);
-		endpoint = json_getstr ( pAnnotations : 'endpoint');
-		if endpoint <= ''; 
-			endpoint = routine + routinetypeNc;
-		endif;
-		method = strLower(json_getstr ( pAnnotations : 'method'));
-		if method <= '';
-			if routinetype = 'SCALAR' // scalar
-			or routinetype = 'TABLE'  // table
-			or resultSets >= 1;       // Procedure with result set (open cursor)  
-				method = 'get';
-			else;
-				method = 'post';
-			endif;
-		endif;
+	dcl-s ref   		varchar(10) inz('$ref');
 
-		resultSets  = json_getInt(iterList.this:'result_sets');
-		if resultSets >= 1;
-			OutputReference = '"$ref":"#/definitions/ApiResponse"';
-		else;
-			OutputReference = '"$ref":"#/components/schemas/' + routine + method + 'Output' + routinetypeNc+ '"';	
-		endif; 
-
-
-		// When the endpoint exists - we just append each method
-		pathName = '/' + environment + '/' + schema + '/' + endpoint;
-		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
-		if pRoute = *NULL; 
-			pRoute = json_newObject();
-			json_noderename (pRoute : '/' + environment + '/' + schema + '/' + endpoint);
-			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
-		endif;
-
-		pMethod = json_parseString(
+	return 	json_parseString(
 		`{
 			"tags": [
 				"${schema}"
 			],
 			"operationId": "${endpoint}",
-			"summary": "${  json_getStr(iterList.this:'description') }",
+			"summary": "${description}",
 			"requestBody": {
 				"content": {
 					"application/json": {
@@ -691,90 +822,6 @@ dcl-proc buildSwaggerJson;
 				}
 			}
 		}`);	
-
-		if json_getInt (iterList.this : 'implementations') > 1;
-			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
-				json_getStr (iterList.this : 'implementations') + 
-				' implementations and can not be executed. Can not decide which to use'); 
-		endif;
-
-		if method = 'get';
-			json_delete ( json_locate(pMethod : 'requestBody'));
-
-			json_moveobjectinto  ( pRoute  :  'get'  : pMethod ); 
-			pParameters = json_moveobjectinto ( pRoute : 'parameters': json_newArray());
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  ;
-					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
-				endif;
-			enddo;
-
-
-			pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
-			json_setStr(pParmsOutput : 'type' : 'object');
-			pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-
-			if routinetype = 'SCALAR'; // scalar
-
-				pParm = json_newObject(); 
-				json_noderename (pParm : 'success' );
-				json_setStr    (pParm : 'name'        : 'success');
-				json_setStr    (pParm : 'type'        : 'boolean');
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
-
-				pParm = swaggerParm (
-					json_getChild( 
-						json_locate (iterList.this:'parms') 
-					)
-				);
-				json_noderename (pParm : 'result' );
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
-
-
-			else;
-				iterParms = json_setIterator(iterList.this:'parms');  
-				dow json_ForEach(iterParms) ;  
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-				enddo;
-			endif;
-		else;	
-
-			json_moveobjectinto  ( pRoute  :  method  : pMethod ); 
-
-			pParmsInput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Input' + routinetypenc  : json_newObject() ); 
-			json_setStr(pParmsInput : 'type' : 'object');
-			pPropertyInput  = json_moveobjectinto  ( pParmsInput  :  'properties' : json_newObject() ); 
-
-			if resultSets = 0;
-				pParmsOutput = json_moveobjectinto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
-				json_setStr(pParmsOutput : 'type' : 'object');
-				pPropertyOutput  = json_moveobjectinto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-			endif;
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
-				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-				endif;
-				if resultSets = 0;
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
-					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-				endif;
-			enddo;
-		endif; 
-	enddo;	
-
-
-	json_moveobjectinto  ( pOpenApi  :  'definitions' : definitions()  ); 
-
-	return (pOpenApi);
 
 
 end-proc;
@@ -1112,16 +1159,15 @@ dcl-proc parameterDescription ;
 
 end-proc;
 // ------------------------------------------------------------------------------------
-// Parse Annotations
-// The annotation @Method in the description makes the prcdure visible in the openAPI( swagger) user interface: 
+// Parse Annotations, and remove annotations from the string 
+// The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface: 
 // The annotation @Endpoint is the name of the endpoint
 // comment on procedure corpdata.employee_set is 'Update Employee information @Method=PATCH @Endpoint=employee';
 // ------------------------------------------------------------------------------------
 dcl-proc parseAnnotations;
 
-	dcl-pi parseAnnotations ;
-		pRoutine     pointer value;
-		description  varchar(1000) const;
+	dcl-pi parseAnnotations  pointer;
+		description  varchar(2000) ;
 	end-pi;
 
 	dcl-s pAnnotations pointer;
@@ -1149,10 +1195,13 @@ dcl-proc parseAnnotations;
 					st = %len(description);
 				endif; 
 				json_setStr ( pAnnotations : annotation : value);
+				%subst ( description : at : st - at + 1 ) = '';
 			endif;
 		endif;
 	enddo;
 
-	json_moveobjectinto  ( pRoutine  :  'annotations' : pAnnotations ); 
+	description = %trimr (description);
+
+	return pAnnotations;
 
 end-proc;
