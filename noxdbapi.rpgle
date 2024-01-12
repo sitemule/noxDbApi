@@ -622,7 +622,8 @@ dcl-proc buildSwaggerJson;
 
 			iterParms = json_setIterator(iterList.this:'parms');  
 			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  ;
+				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  
+				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT'  ;
 					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
 				endif;
 			enddo;
