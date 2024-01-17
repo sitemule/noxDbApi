@@ -82,7 +82,6 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
  /include qasphdr,jsonparser
  /include qasphdr,iceutility
 
-
 // --------------------------------------------------------------------
 // Main line:
 // --------------------------------------------------------------------
@@ -93,6 +92,7 @@ dcl-proc main;
 	dcl-s schemaName    varchar(64);
 	dcl-s procName 		varchar(128);
  	
+	rootName(); // TODO for now just initialize; 
 
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
@@ -109,7 +109,7 @@ dcl-proc main;
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
 	else;
-		serveProcedureResponse (environment : schemaName : procName : getenvvar('NOXDBAPI_EXPOSE_ROUTINES'));
+		serveProcedureResponse (environment : schemaName : procName : url : getenvvar('NOXDBAPI_EXPOSE_ROUTINES'));
 	endif; 
 
 
@@ -161,6 +161,7 @@ dcl-proc serveProcedureResponse ;
 		environment     varchar(64);
 		schema          varchar(64);
 		procName        varchar(128);
+		url             varchar(256);
 		exposeRoutines  varchar(256) const options(*varsize);
 	end-pi;
 	dcl-s pResponse		pointer;		
@@ -168,11 +169,13 @@ dcl-proc serveProcedureResponse ;
 	dcl-s pPayload      pointer;	
 	dcl-s name  		varchar(64);
 	dcl-s value  		varchar(32760);
+	dcl-s pathParm      varchar(256);
 	dcl-s parmList  	varchar(32760);
 	dcl-s sqlStmt   	varchar(32760);
 	dcl-s specificName  varchar(128);
 	dcl-s pRoutineMeta  pointer;
 	dcl-s len 			int(10);
+	dcl-s parmNum    	int(10);
 	dcl-ds iterParms  	likeds(json_iterator);
 	dcl-ds iterList  	likeds(json_iterator);  
 	
@@ -188,28 +191,34 @@ dcl-proc serveProcedureResponse ;
 	pPayload = json_ParseRequest();
 
 	// When payload is not posted ( aka not a object) we create it from the url parameters
+	// Ensure it is empty by creating a new. It can either be null of an empty object {}
 	if json_getChild (pPayload) = *NULL; 
 		json_delete(pPayload);
 		pPayload = json_newObject();
-		getQryStrList ( name : value : '*FIRST');
-		dow name > '';
-			json_setValue (pPayload : camelToSnakeCase(name) : value );
-			getQryStrList ( name : value : '*NEXT');
-		enddo;
 	else; 
 		iterList = json_setIterator(pPayload);  
 		dow json_ForEach(iterList) ;  
 			json_noderename (iterList.this : camelToSnakeCase ( json_getname (iterList.this) ));
 		enddo; 
-		// append or replace querystring parameters to payload object 
-		getQryStrList ( name : value : '*FIRST');
-		dow name > '';
-			json_setValue (pPayload : camelToSnakeCase(name) : value );
-			getQryStrList ( name : value : '*NEXT');
-		enddo;
-
 	endif;
 
+	// append or replace querystring parameters to payload object 
+	getQryStrList ( name : value : '*FIRST');
+	dow name > '';
+		json_setValue (pPayload : camelToSnakeCase(name) : value );
+		getQryStrList ( name : value : '*NEXT');
+	enddo;
+
+	// path parameters given? find the name and add to the payload:
+	if exposeRoutines = 'ANNOTATED';
+		for parmNum = 1 to 10;
+			pathParm = word ( url: parmNum + 3: '/');
+			if pathParm = '';
+				leave;
+			endif;
+			json_setValue (pPayload : getParmName ( schema : procName : parmNum) : pathParm );
+		endfor;
+	endif;	
 	
 	if exposeRoutines = 'ANNOTATED';
 		specificName = getSpecificNameByAnnotations ( schema : procName) ;
@@ -224,13 +233,6 @@ dcl-proc serveProcedureResponse ;
 		*ON // Specific 
 	);
 
-	//	if json_Error(pResponse);
-	//		consolelog(sqlStmt);
-	//		pResponse= FormatError (
-	//			'Invalid action or parameter: '  
-	//		);
-	//	endif;
-
 	// The result will be in snake ( as is). JSON is typically Cammel 
 	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
 	iterList = json_setIterator(pResponse);  
@@ -243,8 +245,8 @@ dcl-proc serveProcedureResponse ;
 
 on-exit; 
 
-	if   json_locate (pResponse : 'result') <> *NULL
-	and  json_isnull (pResponse : 'result');
+	if   json_locate (pResponse : rootName) <> *NULL
+	and  json_isnull (pResponse : rootName);
 		setStatus ('404');
 	elseif json_getstr(pResponse : 'success') = 'false';
 		msg = json_getstr(pResponse: 'message');
@@ -339,6 +341,46 @@ dcl-proc getSpecificNameByAnnotations;
 		  or     long_comment like '%@Endpoint=' || :routine  );
 
 	return schema + '.' + specificName;
+end-proc;
+// ------------------------------------------------------------------------------------
+// get parameter name from a specific routing name by annotations 
+// ------------------------------------------------------------------------------------
+dcl-proc getParmName;
+
+	dcl-pi *n varchar(128);
+		schema  varchar(64) value ;
+		routine varchar(128) value ;
+		parmNumber  int(5) value;
+	end-pi;
+
+	dcl-s functionType 	char(1);	
+	dcl-s routineType 	char(10);	
+	dcl-s method  	    varchar(10);	
+	dcl-s specificName  varchar(128);
+	dcl-s parameterName varchar(128);
+
+	method = getServerVar('REQUEST_METHOD');
+	schema  = strUpper(camelToSnakeCase (schema));
+
+	// Note: to make the endpoint unique:
+	// 1) a blank has to follow the method name 
+	// 2) The endpoint name has to terminate the textstring 
+	exec sql
+		select parameter_name 
+		into   :parameterName
+		from   qsys2.sysroutines r
+		join sysparms p 
+			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
+		where  r.specific_schema = :schema 
+		and    r.long_comment like '%@Method=' || :method || '%'
+		and    ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
+		  or     r.long_comment like '%@Endpoint=' || :routine  )
+        and    p.long_comment like '%@Parameter=PATH%'
+        order by ordinal_position
+        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
+
+
+	return snakeToCamelCase (parameterName);
 end-proc;
 /* -------------------------------------------------------------------- *\ 
    JSON error monitor 
@@ -505,8 +547,20 @@ dcl-proc reorderResultAsTree;
 			pParms = json_moveObjectInto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
 		endif;
+		// Parameter beef-up
+		if json_isnull (iterList.this : 'long_comment' ); 
+			description = json_getStr ( iterList.this : 'parameter_name') ;
+		else;
+			description = json_getStr ( iterList.this : 'long_comment');
+			json_moveObjectInto  ( iterList.this :  'annotations' : parseAnnotations ( description) );
+		endif; 
+		description += ' as ' + dataTypeAsText(iterList.this);
+		json_setStr (iterList.this:'parmDescription':description );
 		json_arrayPush(pParms : iterList.this: JSON_COPY_CLONE);
 	enddo;
+
+	// debug
+	json_WriteJsonStmf(pTree:'/prj/noxdbapi/debug/routine-tree.json':1208:*OFF);
 
 	return pTree;
 
@@ -581,6 +635,7 @@ dcl-proc buildSwaggerJson;
 			endif;
 		endif;
 
+		
 		resultSets  = json_getInt(iterList.this:'result_sets');
 		if resultSets >= 1;
 			OutputReference = '"$ref":"#/definitions/ApiResponse"';
@@ -589,11 +644,11 @@ dcl-proc buildSwaggerJson;
 		endif; 
 
 		// When the endpoint exists - we just append each method
-		pathName = '/' + environment + '/' + schema + '/' + endpoint;
+		pathName = '/' + environment + '/' + schema + '/' + endpoint + getUrlParms (iterList.this);
 		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
 		if pRoute = *NULL; 
 			pRoute = json_newObject();
-			json_noderename (pRoute : '/' + environment + '/' + schema + '/' + endpoint);
+			json_noderename (pRoute : pathName);
 			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 		endif;
 
@@ -618,7 +673,7 @@ dcl-proc buildSwaggerJson;
 			json_delete ( json_locate(pMethod : 'requestBody'));
 
 			json_moveObjectInto  ( pRoute  :  'get'  : pMethod ); 
-			pParameters = json_moveObjectInto ( pRoute : 'parameters': json_newArray());
+			pParameters = json_moveObjectInto ( pMethod : 'parameters': json_newArray());
 
 			iterParms = json_setIterator(iterList.this:'parms');  
 			dow json_ForEach(iterParms) ;  
@@ -645,7 +700,7 @@ dcl-proc buildSwaggerJson;
 						json_locate (iterList.this:'parms') 
 					)
 				);
-				json_noderename (pParm : 'result' );
+				json_noderename (pParm : rootName());
 				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
 
 
@@ -688,11 +743,39 @@ dcl-proc buildSwaggerJson;
 	enddo;	
 
 	json_moveObjectInto  ( pOpenApi  :  'definitions' : definitions()  ); 
+	json_moveObjectInto  ( pOpenApi  :  'externalDocs' : externalDocs() ); 
 
 	return (pOpenApi);
 
 
 end-proc;
+// ------------------------------------------------------------------------------------
+// getUrlParms
+// ------------------------------------------------------------------------------------
+dcl-proc getUrlParms;
+
+	dcl-pi getUrlParms varchar(256);
+		pRoutine pointer value;
+	end-pi;
+
+	dcl-ds iterParms  	likeds(json_iterator);  
+	dcl-s urlParms  	varchar(256);
+
+	iterParms = json_setIterator(pRoutine:'parms');  
+	dow json_ForEach(iterParms) ; 
+		if 	json_getStr(iterParms.this: 'annotations.Parameter') = 'PATH';
+			urlParms += '/{' 
+				+ snakeToCamelCase(
+					json_getStr(iterParms.this: 'parameter_name')
+				  ) 
+			+ '}';
+		endif;
+	enddo;
+
+	return urlParms;
+
+end-proc;
+
 // ------------------------------------------------------------------------------------
 // Open api prolog
 // ------------------------------------------------------------------------------------
@@ -848,7 +931,7 @@ dcl-proc definitions;
 				"metaData": {
 					"type": "object"
 				},
-				"rows": {
+				"${rootName()}": {
 					"type" : "array",
 					"items": {
                         "type": "object"
@@ -879,7 +962,7 @@ dcl-proc definitions;
 					"type": "boolean",
 					"default": false
 				},
-				"result": {
+				"${rootName()}": {
 					"type": "string",
 					"default": null
 				}
@@ -888,7 +971,22 @@ dcl-proc definitions;
 	}`);
 
 end-proc;
+// ------------------------------------------------------------------------------------
+// externalDocs
+// ------------------------------------------------------------------------------------
+dcl-proc externalDocs;
 
+	dcl-pi externalDocs pointer;
+	end-pi;
+
+	dcl-s pExternal pointer;
+
+	pExternal = json_newObject();
+	json_setStr( pExternal : 'description' : 'Find out more about noxDbApi');
+	json_setStr( pExternal : 'url': 'https://github.com/sitemule/noxDbApi');
+	return pExternal;
+
+end-proc;
 // ------------------------------------------------------------------------------------
 // swaggerCommonParmmeters
 // ------------------------------------------------------------------------------------
@@ -899,10 +997,13 @@ dcl-proc swaggerCommonParmmeters;
 		pMetaParm pointer value;
 	end-pi;
 
-	json_setStr ( pSwaggerParm : 'description' : parameterDescription (pMetaParm ));
+	json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
 	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
 	json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
-	json_setBool( pSwaggerParm : 'required'    : json_isnull (pMetaParm : 'DEFAULT') );
+	json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
+	if 	json_getStr(pMetaParm: 'annotations.Parameter') = 'PATH';
+		json_setStr ( pSwaggerParm : 'in'      : 'path');
+	endif;
 	
 	if json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH') > 0;
 		json_setInt     ( pSwaggerParm : 'maxLength'   : json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH'));
@@ -1138,26 +1239,6 @@ dcl-proc dataTypeAsText;
 
 end-proc;
 
-
-// ------------------------------------------------------------------------------------
-// parameter description
-// ------------------------------------------------------------------------------------
-dcl-proc parameterDescription ;
-
-	dcl-pi *n varchar(1024);
-		pMetaParm pointer value;
-	end-pi;
-
-	dcl-s  description varchar(1024);
-	
-	if json_isnull (pMetaParm : 'long_comment' ); 
-		description = 	json_getStr ( pMetaParm : 'parameter_name') + ' as ' + dataTypeAsText(pMetaParm);
-	else;
-		description = 	json_getStr ( pMetaParm : 'long_comment');
-	endif; 
-	return description;
-
-end-proc;
 // ------------------------------------------------------------------------------------
 // Parse Annotations, and remove annotations from the string 
 // The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface: 
@@ -1204,4 +1285,25 @@ dcl-proc parseAnnotations;
 
 	return pAnnotations;
 
+end-proc;
+// ------------------------------------------------------------------------------------
+// root Name for resultsets
+// ------------------------------------------------------------------------------------
+dcl-proc rootName;
+
+	dcl-pi rootName varchar(32);
+	end-pi;
+
+	dcl-s rootName 	varchar(32) static;
+
+	if rootName = '';
+		rootName = getenvvar('NOXDBAPI_ROOT_NAME'); 
+		if  rootName = '';
+			rootName = 'data';
+		endif;
+		json_sqlSetRootName (rootName);  
+	endif;
+	
+
+	return rootName;
 end-proc;
