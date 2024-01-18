@@ -212,7 +212,7 @@ dcl-proc serveProcedureResponse ;
 	// path parameters given? find the name and add to the payload:
 	if exposeRoutines = 'ANNOTATED';
 		for parmNum = 1 to 10;
-			pathParm = word ( url: parmNum + 3: '/');
+			pathParm = word ( url: parmNum + 3: '/'); // TODO !! now  path parms start after the endpoint ( word 4 ..) , that will change!!
 			if pathParm = '';
 				leave;
 			endif;
@@ -574,33 +574,38 @@ dcl-proc buildSwaggerJson;
 		pRoutines pointer value;
 	end-pi;
 
-	dcl-ds iterList   	likeds(json_iterator);  
-	dcl-ds iterParms  	likeds(json_iterator);  
-	dcl-s pOpenApi  	pointer;
-	dcl-s pRoute 		pointer;
-	dcl-s pPaths  		pointer;
-	dcl-s pParms  		pointer;
-	dcl-s pParm   		pointer;
-	dcl-s pMethod 		pointer;
-	dcl-s pComponents 	pointer;
-	dcl-s pSchemas   	pointer;
-	dcl-s pPropertyInput pointer;
+	dcl-ds iterList   	  likeds(json_iterator);  
+	dcl-ds iterParms   	  likeds(json_iterator);  
+	dcl-ds iterPathParms  likeds(json_iterator);
+	dcl-s pPathParms  	  pointer;
+	dcl-s pathParms       varchar(256);
+	dcl-s pOpenApi  	  pointer;
+	dcl-s pRoute 		  pointer;
+	dcl-s pPaths  		  pointer;
+	dcl-s pParms  		  pointer;
+	dcl-s pParm   		  pointer;
+	dcl-s pMethod 		  pointer;
+	dcl-s pComponents 	  pointer;
+	dcl-s pSchemas   	  pointer;
+	dcl-s pPropertyInput  pointer;
 	dcl-s pPropertyOutput pointer;
-	dcl-s pParameters 	pointer;
-	dcl-s pParmsInput 	pointer;
-	dcl-s pParmsOutput 	pointer;	
-	dcl-s Schema   		varchar(64);
-	dcl-s Routine 		varchar(64);
-	dcl-s RoutineType 	varchar(10);
-	dcl-s RoutineTypeNc varchar(10);
-	dcl-s resultSets    int(5);
+	dcl-s pParameters 	  pointer;
+	dcl-s pParmsInput 	  pointer;
+	dcl-s pParmsOutput 	  pointer;	
+	dcl-s Schema   		  varchar(64);
+	dcl-s Routine 		  varchar(64);
+	dcl-s RoutineType 	  varchar(10);
+	dcl-s RoutineTypeNc   varchar(10);
+	dcl-s resultSets      int(5);
 	dcl-s OutputReference varchar(256);
-	dcl-s methods       varchar(256);
-	dcl-s method        varchar(16);
-	dcl-s endpoint      varchar(256);
-	dcl-s pathName      varchar(256);
-	dcl-s pAnnotations  pointer;
-	dcl-s description varchar(1024);
+	dcl-s methods         varchar(256);
+	dcl-s method          varchar(16);
+	dcl-s endpoint        varchar(256);
+	dcl-s pathName        varchar(256);
+	dcl-s outRefSchema    varchar(256);
+	dcl-s inRefSchema     varchar(256);
+	dcl-s pAnnotations    pointer;
+	dcl-s description     varchar(1024);
 
 
 	pOpenApi  =  openApiProlog();
@@ -619,10 +624,10 @@ dcl-proc buildSwaggerJson;
 		description = json_getStr (iterList.this:'description');
 
 		pAnnotations = json_locate (iterList.this:'annotations');
-		routinetypeNc = NameCase (routinetype);
+		routineTypeNc = NameCase (routinetype);
 		endpoint = json_getstr ( pAnnotations : 'endpoint');
 		if endpoint <= ''; 
-			endpoint = routine + routinetypeNc;
+			endpoint = routine + routineTypeNc;
 		endif;
 		method = strLower(json_getstr ( pAnnotations : 'method'));
 		if method <= '';
@@ -635,111 +640,137 @@ dcl-proc buildSwaggerJson;
 			endif;
 		endif;
 
+
+		outRefSchema = routine + nameCase(method) + 'Output' + routineTypeNc;
+		inRefschema  = Routine + nameCase(method) + 'Input'  + routineTypeNc;
 		
 		resultSets  = json_getInt(iterList.this:'result_sets');
 		if resultSets >= 1;
 			OutputReference = '"$ref":"#/definitions/ApiResponse"';
 		else;
-			OutputReference = '"$ref":"#/components/schemas/' + routine + method + 'Output' + routinetypeNc+ '"';	
+			OutputReference = '"$ref":"#/components/schemas/'  + outRefSchema + '"';	
 		endif; 
 
-		// When the endpoint exists - we just append each method
-		pathName = '/' + environment + '/' + schema + '/' + endpoint + getUrlParms (iterList.this);
-		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
-		if pRoute = *NULL; 
-			pRoute = json_newObject();
-			json_noderename (pRoute : pathName);
-			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
+
+		// make an endpoind for each path parm
+		// TODO!! now only that the fist as a comple list 
+		pathParms = getPathParms (iterList.this);
+		pPathParms = json_newArray();
+		json_arrayPush (pPathParms :'');
+		if pathParms > '';
+			json_arrayPush (pPathParms : pathParms);
 		endif;
 
 
-		pMethod = openApiMethod (
-			schema:
-			endpoint:
-			description:
-			routine:
-			method:
-			routineTypeNc:
-			OutputReference
-		);
+		iterPathParms = json_setIterator(pPathParms);  
+		dow json_ForEach(iterPathParms) ;  
 
-		if json_getInt (iterList.this : 'implementations') > 1;
-			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
-				json_getStr (iterList.this : 'implementations') + 
-				' implementations and can not be executed. Can not decide which to use'); 
-		endif;
+			pathParms = json_getStr(iterPathParms.this);
+			
+			if (method = 'patch' or method = 'put' or method = 'delete') and pathParms = '';
+				// TODO !! for now both patch and put need a key on the path 
+			else;   
 
-		if method = 'get';
-			json_delete ( json_locate(pMethod : 'requestBody'));
 
-			json_moveObjectInto  ( pRoute  :  'get'  : pMethod ); 
-			pParameters = json_moveObjectInto ( pMethod : 'parameters': json_newArray());
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  ;
-					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+				// When the endpoint exists - we just append each method
+				pathName = '/' + environment + '/' + schema + '/' + endpoint + pathParms;
+				pRoute = json_locate  ( pPaths : '"' + pathName +'"');
+				if pRoute = *NULL; 
+					pRoute = json_newObject();
+					json_noderename (pRoute : pathName);
+					json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 				endif;
-			enddo;
 
 
-			pParmsOutput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
-			json_setStr(pParmsOutput : 'type' : 'object');
-			pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-
-			if routinetype = 'SCALAR'; // scalar
-
-				pParm = json_newObject(); 
-				json_noderename (pParm : 'success' );
-				json_setStr    (pParm : 'name'        : 'success');
-				json_setStr    (pParm : 'type'        : 'boolean');
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
-
-				pParm = swaggerParm (
-					json_getChild( 
-						json_locate (iterList.this:'parms') 
-					)
+				pMethod = openApiMethod (
+					schema:
+					endpoint:
+					description:
+					routine:
+					method:
+					inRefschema:
+					OutputReference
 				);
-				json_noderename (pParm : rootName());
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
 
-
-			else;
-				iterParms = json_setIterator(iterList.this:'parms');  
-				dow json_ForEach(iterParms) ;  
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-				enddo;
-			endif;
-		else;	
-
-			json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
-
-			pParmsInput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Input' + routinetypenc  : json_newObject() ); 
-			json_setStr(pParmsInput : 'type' : 'object');
-			pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
-
-			if resultSets = 0;
-				pParmsOutput = json_moveObjectInto  ( pSchemas  :  Routine + method + 'Output' + routinetypenc  : json_newObject() ); 
-				json_setStr(pParmsOutput : 'type' : 'object');
-				pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-			endif;
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN' 
-				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				if json_getInt (iterList.this : 'implementations') > 1;
+					json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
+						json_getStr (iterList.this : 'implementations') + 
+						' implementations and can not be executed. Can not decide which to use'); 
 				endif;
-				if resultSets = 0;
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
-					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+
+				if method = 'get' or method = 'delete' ;
+					json_delete ( json_locate(pMethod : 'requestBody')); // get do not have a body
+
+					json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
+					pParameters = json_moveObjectInto ( pMethod : 'parameters': json_newArray());
+
+					iterParms = json_setIterator(iterList.this:'parms');  
+					dow json_ForEach(iterParms) ;  
+						if isInputInThisContext(iterParms.this : iterPathParms.this );
+							json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+						endif;
+					enddo;
+
+
+					pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+					json_setStr(pParmsOutput : 'type' : 'object');
+					pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+
+					if routinetype = 'SCALAR'; // scalar
+
+						pParm = json_newObject(); 
+						json_noderename (pParm : 'success' );
+						json_setStr    (pParm : 'name'        : 'success');
+						json_setStr    (pParm : 'type'        : 'boolean');
+						json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+						pParm = swaggerParm (
+							json_getChild( 
+								json_locate (iterList.this:'parms') 
+							)
+						);
+						json_noderename (pParm : rootName());
+						json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
+
+
+					else;
+						iterParms = json_setIterator(iterList.this:'parms');  
+						dow json_ForEach(iterParms) ;  
+							if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
+								json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+							endif;
+						enddo;
 					endif;
-				endif;
-			enddo;
-		endif; 
+				else;	
+
+					json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
+
+					pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+					json_setStr(pParmsInput : 'type' : 'object');
+					pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+					if resultSets = 0;
+						pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+						json_setStr(pParmsOutput : 'type' : 'object');
+						pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+					endif;
+
+					iterParms = json_setIterator(iterList.this:'parms');  
+					dow json_ForEach(iterParms) ;  
+						if isInputInThisContext(iterParms.this : iterPathParms.this );
+							json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+						endif;
+						if resultSets = 0;
+							if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
+							or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+								json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+							endif;
+						endif;
+					enddo;
+				endif; 
+			endif;
+		enddo;
+		json_delete(pPathParms);
 	enddo;	
 
 	json_moveObjectInto  ( pOpenApi  :  'definitions' : definitions()  ); 
@@ -750,21 +781,49 @@ dcl-proc buildSwaggerJson;
 
 end-proc;
 // ------------------------------------------------------------------------------------
-// getUrlParms
+// is Input In This Context
 // ------------------------------------------------------------------------------------
-dcl-proc getUrlParms;
+dcl-proc isInputInThisContext;
 
-	dcl-pi getUrlParms varchar(256);
+	dcl-pi isInputInThisContext ind ;
+		pParm      pointer value;
+		pParmPath  pointer value;
+	end-pi;
+
+	dcl-s pathParms varchar(256);
+	dcl-s mode      varchar(10);
+
+	pathParms = json_getStr(pParmPath);
+	mode = json_getStr (pParm:'parameter_mode') ;
+
+	if mode = 'IN'  ;
+		if 	(json_getStr(pParm: 'annotations.Parameter') = 'PATH' and pathParms > '')
+		or  (json_getStr(pParm: 'annotations.Parameter') = ''     and pathParms = '');
+			return *ON;
+		endif;
+	elseif mode = 'INOUT' ;
+		return *ON;
+	endif; 
+
+	return *off;
+	
+end-proc;
+// ------------------------------------------------------------------------------------
+// get parameter from the path 
+// ------------------------------------------------------------------------------------
+dcl-proc getPathParms;
+
+	dcl-pi getPathParms varchar(256);
 		pRoutine pointer value;
 	end-pi;
 
 	dcl-ds iterParms  	likeds(json_iterator);  
-	dcl-s urlParms  	varchar(256);
+	dcl-s pathParms  	varchar(256);
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ; 
 		if 	json_getStr(iterParms.this: 'annotations.Parameter') = 'PATH';
-			urlParms += '/{' 
+			pathParms += '/{' 
 				+ snakeToCamelCase(
 					json_getStr(iterParms.this: 'parameter_name')
 				  ) 
@@ -772,7 +831,7 @@ dcl-proc getUrlParms;
 		endif;
 	enddo;
 
-	return urlParms;
+	return pathParms;
 
 end-proc;
 
@@ -841,7 +900,7 @@ dcl-proc openApiMethod;
 		description varchar(1024) const;
 		routine varchar(128) const;
 		method varchar(32) const;
-		routineTypeNc varchar(128) const;
+		inRefSchema varchar(256) const;
 		OutputReference varchar(256) const;
 	end-pi;
 
@@ -858,7 +917,7 @@ dcl-proc openApiMethod;
 				"content": {
 					"application/json": {
 						"schema": {
-							"${ref}": "#/components/schemas/${routine}${method}Input${routineTypeNc}"
+							"${ref}": "#/components/schemas/${inRefSchema}"
 						}
 					}
 				},

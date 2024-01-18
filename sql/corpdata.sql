@@ -243,8 +243,9 @@ begin
     where empno = employee_fetch.empno;
     
     if  sqlcode <> 0 then
+         -- The number of the state will be the http error returned: here 404 not found
         set message = 'Row does not exists for employee ' || empno;
-        signal sqlstate 'USR01' set message_text = message , column_name = 'empno';
+        signal sqlstate 'HT404' set message_text = message;
     end if;
 
 end;    
@@ -297,8 +298,9 @@ begin
     where empno = employee_update.empno;
     
     if  sqlcode <> 0 then
+        -- The number of the state will be the http error returned: here 404 not found
         set message = 'Row does not exists for employee ' || empno;
-        signal sqlstate 'USR01' set message_text = message , column_name = 'empno';
+        signal sqlstate 'HT404' set message_text = message ;
     end if;
     
 end;
