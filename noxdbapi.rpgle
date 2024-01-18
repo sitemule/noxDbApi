@@ -672,7 +672,6 @@ dcl-proc buildSwaggerJson;
 			else;   
 
 
-<<<<<<< HEAD
 				// When the endpoint exists - we just append each method
 				pathName = '/' + environment + '/' + schema + '/' + endpoint + pathParms;
 				pRoute = json_locate  ( pPaths : '"' + pathName +'"');
@@ -680,16 +679,6 @@ dcl-proc buildSwaggerJson;
 					pRoute = json_newObject();
 					json_noderename (pRoute : pathName);
 					json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
-=======
-			json_moveObjectInto  ( pRoute  :  'get'  : pMethod ); 
-			pParameters = json_moveObjectInto ( pRoute : 'parameters': json_newArray());
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if json_getStr (iterParms.this:'parameter_mode') = 'IN'  
-				or json_getStr (iterParms.this:'parameter_mode') = 'INOUT'  ;
-					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
->>>>>>> 1d1b356bc1c850f4d3f80a259730d17bd9333e89
 				endif;
 
 
