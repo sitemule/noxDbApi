@@ -1185,14 +1185,19 @@ dcl-proc dataTypeJson;
 	end-pi;
 
 	dcl-s inputType varchar(64);
+	dcl-s userType4 varchar(4);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
-	 
+
+    userType4 = json_getstr (pMetaParm : 'user_defined_type_name');
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
+		when userType4  = 'BOOL';
+			return 'boolean';
+
 		when inputType = 'INTEGER' 
 		or   inputType = 'SMALLINT' 
 		or   inputType = 'BIGINT' 
@@ -1229,8 +1234,8 @@ dcl-proc dataFormatJson;
 	dcl-s numericPrecision int (5);
 	 
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
 		when   inputType = 'BIGINT' 
@@ -1280,12 +1285,12 @@ dcl-proc dataTypeAsText;
 
 	 
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 
-	if json_isnull (pMetaParm : 'NUMERIC_PRECISION');
-		length = json_getint (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH');
+	if json_isnull (pMetaParm : 'numeric_precision');
+		length = json_getint (pMetaParm : 'character_maximum_length');
 	else;
-		length = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+		length = json_getint (pMetaParm : 'numeric_precision');
 	endif;
 
 

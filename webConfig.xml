@@ -35,11 +35,11 @@
 		Any additional response headers required to make you application work. 
 		These headers are added for both static and dynamic responses ( bothe the webserver and the application server provide these headers
 	-->
-	<xxx_headers>
-		<var name="Access-Control-Allow-Origin"  		value="http://www.icebreak.org"/> 
+	<headers>
+		<var name="Access-Control-Allow-Origin"  		value="https://apigw.unoxmobility.dk"/> 
 		<var name="Access-Control-Allow-Credentials"  	value="true"/> 
 		<var name="Access-Control-Expose-Headers"  		value="FooBar"/> 
-	</xxx_headers> 
+	</headers> 
 
 	<!--
 		The globalvar tag contains global constants you can access with the globalGetGetVar() on to of the dynamic get/set-globalvar 
@@ -78,10 +78,10 @@
 	 -->  
 
 	<envvar>
-		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="CORPDATA"/>
+		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="WEBAPI"/>
 		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
-		<var name="YYYNOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI,UDTFDEMO,QSYS2"/>
-		<var name="YYYNOXDBAPI_EXPOSE_SCHEMAS" value="NOXDBAPI"/>
+		<var name="NOXDBAPI_ROOT_NAME" value="data"/>
+		
 	</envvar>
 	
 
