@@ -35,11 +35,11 @@
 		Any additional response headers required to make you application work. 
 		These headers are added for both static and dynamic responses ( bothe the webserver and the application server provide these headers
 	-->
-	<headers>
+	<xxx_headers>
 		<var name="Access-Control-Allow-Origin"  		value="https://apigw.unoxmobility.dk"/> 
 		<var name="Access-Control-Allow-Credentials"  	value="true"/> 
-		<var name="Access-Control-Expose-Headers"  		value="FooBar"/> 
-	</headers> 
+		<var name="Access-Control-Expose-Headers"  		value="GET;OPTIONS"/> 
+	</xxx_headers> 
 
 	<!--
 		The globalvar tag contains global constants you can access with the globalGetGetVar() on to of the dynamic get/set-globalvar 
@@ -81,7 +81,6 @@
 		<var name="NOXDBAPI_EXPOSE_SCHEMAS" value="WEBAPI"/>
 		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
 		<var name="NOXDBAPI_ROOT_NAME" value="data"/>
-		
 	</envvar>
 	
 
@@ -147,14 +146,6 @@
 		<map pattern="^/noxdbapi/" pgm="noxdbapi" lib="*LIBL" />
 	</routing>
 
-	<xxx_routing strict="false">
-		<map pattern="maptest|^john" pgm="hello" lib="*LIBL" casesensitive="true"/>
-		<map pattern="testroute" pgm="hello" lib="*LIBL"/>
-		<map pattern="^images" pgm="scaleimage" lib="*LIBL"/>
-		<map pattern="^(\[|\{)" pgm="jsonrouter" lib="*LIBL"/>
-
-		<!--	<map pattern="^.*"    pgm="default" lib="*LIBL"/> -->
-	</xxx_routing>
 
 	<!--
 		Hives is virtual Paths and maps to the associated application library and library list.  

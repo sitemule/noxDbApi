@@ -97,7 +97,7 @@ dcl-proc main;
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
-	procName    = word (url:3:'/');
+	procName    = word (url:3:'/');		
 
 	if  schemaName = 'openapi-meta';
 		// The envvar is set in the "webconfig.xml" file. The "envvar" tag
@@ -109,7 +109,14 @@ dcl-proc main;
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
 	else;
-		serveProcedureResponse (environment : schemaName : procName : url : getenvvar('NOXDBAPI_EXPOSE_ROUTINES'));
+		serveProcedureResponse (
+			environment : 
+			schemaName : 
+			procName : 
+			url : 
+			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
+			getenvvar('NOXDBAPI_EXPOSE_ROUTINES')
+		);
 	endif; 
 
 
@@ -162,6 +169,7 @@ dcl-proc serveProcedureResponse ;
 		schema          varchar(64);
 		procName        varchar(128);
 		url             varchar(256);
+		exposeSchemas   varchar(256) const options(*varsize);
 		exposeRoutines  varchar(256) const options(*varsize);
 	end-pi;
 	dcl-s pResponse		pointer;		
@@ -184,6 +192,13 @@ dcl-proc serveProcedureResponse ;
 	if schema <= '';
 		pResponse = FormatError (
 			'Need schema and procedure'
+		);
+		return;
+	endif;
+
+	if wordIxNoCase (exposeSchemas : schema :',') <= 0;
+		pResponse = FormatError (
+			'Invalid schema ' + schema
 		);
 		return;
 	endif;
@@ -843,6 +858,22 @@ dcl-proc openApiProlog ;
 	dcl-pi *n pointer;
 	end-pi;
 
+	dcl-s url  varchar(256);
+	dcl-s host varchar(256);
+	dcl-s protocol varchar(256);
+	dcl-s prefix  varchar(256);
+
+
+	protocol = getHeader ('X-Forwarded-Proto');
+
+	if protocol > '';
+		host     = getHeader ('host');
+		prefix   = getHeader ('X-Forwarded-Prefix');
+		url = protocol + '://' + host + prefix;
+	else;
+		url = getServerVar('SERVER_URI');
+	endif; 
+
 	return  json_parseString(`{
 		"openapi": "3.0.1",
 		"info": {
@@ -851,7 +882,7 @@ dcl-proc openApiProlog ;
 		},
 		"servers": [
 			{
-				"url": "${ getServerVar('SERVER_URI') }",
+				"url": "${ url }",
 				"description": "${ getServerVar('SERVER_SYSTEM_NAME') }"
 			}
 		]
