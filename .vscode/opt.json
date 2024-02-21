@@ -2,5 +2,5 @@
 	"id":"NOXDBAPI",
 	"server":"http://mensa:7007",
 	"env":"ICEBREAK",
-	"path":"/prj/noxdbAPI"
+	"path":"/prj/noxDbApi"
 }

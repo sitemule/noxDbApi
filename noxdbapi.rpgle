@@ -500,7 +500,7 @@ dcl-proc serveListSchemaProcs;
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
 	    where i.number_of_implementations = 1
 		${filterAnnotated}
-		order by r.routine_schema , r.routine_name;
+		order by r.routine_schema , r.routine_name, ordinal_position;
 	`);
 
 	pRoutineTree = reorderResultAsTree (pResult);
@@ -1216,17 +1216,17 @@ dcl-proc dataTypeJson;
 	end-pi;
 
 	dcl-s inputType varchar(64);
-	dcl-s userType4 varchar(4);
+	dcl-s userType varchar(256);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
 
-    userType4 = json_getstr (pMetaParm : 'user_defined_type_name');
+    userType = json_getstr (pMetaParm : 'data_type_name');
 	inputType = json_getstr (pMetaParm : 'data_type');
 	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
-		when userType4  = 'BOOL';
+		when %scan('BOOL' :  userType) > 0;
 			return 'boolean';
 
 		when inputType = 'INTEGER' 
