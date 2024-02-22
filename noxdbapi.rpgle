@@ -373,9 +373,11 @@ dcl-proc getParmName;
 	dcl-s method  	    varchar(10);	
 	dcl-s specificName  varchar(128);
 	dcl-s parameterName varchar(128);
+	dcl-s parmNumber_   varchar(3);
 
 	method = getServerVar('REQUEST_METHOD');
 	schema  = strUpper(camelToSnakeCase (schema));
+	parmNumber_ = %char(parmNumber);
 
 	// Note: to make the endpoint unique:
 	// 1) a blank has to follow the method name 
@@ -390,9 +392,9 @@ dcl-proc getParmName;
 		and    r.long_comment like '%@Method=' || :method || '%'
 		and    ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
 		  or     r.long_comment like '%@Endpoint=' || :routine  )
-        and    p.long_comment like '%@Parameter=PATH%'
-        order by ordinal_position
-        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
+        and    p.long_comment like '%@Parmlocation=PATH,' || :parmNumber_ || '%';
+//        order by ordinal_position
+//        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
 
 
 	return snakeToCamelCase (parameterName);
@@ -807,13 +809,15 @@ dcl-proc isInputInThisContext;
 
 	dcl-s pathParms varchar(256);
 	dcl-s mode      varchar(10);
+	dcl-s parmLocation char(10);
 
 	pathParms = json_getStr(pParmPath);
 	mode = json_getStr (pParm:'parameter_mode') ;
+	parmLocation = json_getStr(pParm: 'annotations.parmlocation');
 
 	if mode = 'IN'  ;
-		if 	(json_getStr(pParm: 'annotations.Parameter') = 'PATH' and pathParms > '')
-		or  (json_getStr(pParm: 'annotations.Parameter') = ''     and pathParms = '');
+		if 	(%subst( parmLocation : 1: 4)  = 'PATH' and pathParms > '')
+		or  ((parmLocation = '' or parmLocation = 'QUERY') and pathParms = '');
 			return *ON;
 		endif;
 	elseif mode = 'INOUT' ;
@@ -834,10 +838,12 @@ dcl-proc getPathParms;
 
 	dcl-ds iterParms  	likeds(json_iterator);  
 	dcl-s pathParms  	varchar(256);
+	dcl-s parmLocation  char(10);
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ; 
-		if 	json_getStr(iterParms.this: 'annotations.Parameter') = 'PATH';
+		parmLocation = json_getStr(iterParms.this: 'annotations.parmlocation'); 
+		if 	%subst(parmLocation : 1: 4) = 'PATH';
 			pathParms += '/{' 
 				+ snakeToCamelCase(
 					json_getStr(iterParms.this: 'parameter_name')
@@ -1087,11 +1093,15 @@ dcl-proc swaggerCommonParmmeters;
 		pMetaParm pointer value;
 	end-pi;
 
+	dcl-s  parmLocation char(10);
+
+	parmLocation = json_getStr(pMetaParm: 'annotations.parmlocation');
+
 	json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
 	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
 	json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
 	json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
-	if 	json_getStr(pMetaParm: 'annotations.Parameter') = 'PATH';
+	if 	%subst(parmLocation: 1 :4) = 'PATH';
 		json_setStr ( pSwaggerParm : 'in'      : 'path');
 	endif;
 	
