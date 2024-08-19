@@ -97,7 +97,7 @@ dcl-proc main;
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
-	procName    = word (url:3:'/');
+	procName    = word (url:3:'/');		
 
 	if  schemaName = 'openapi-meta';
 		// The envvar is set in the "webconfig.xml" file. The "envvar" tag
@@ -109,7 +109,14 @@ dcl-proc main;
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
 	else;
-		serveProcedureResponse (environment : schemaName : procName : url : getenvvar('NOXDBAPI_EXPOSE_ROUTINES'));
+		serveProcedureResponse (
+			environment : 
+			schemaName : 
+			procName : 
+			url : 
+			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
+			getenvvar('NOXDBAPI_EXPOSE_ROUTINES')
+		);
 	endif; 
 
 
@@ -162,6 +169,7 @@ dcl-proc serveProcedureResponse ;
 		schema          varchar(64);
 		procName        varchar(128);
 		url             varchar(256);
+		exposeSchemas   varchar(256) const options(*varsize);
 		exposeRoutines  varchar(256) const options(*varsize);
 	end-pi;
 	dcl-s pResponse		pointer;		
@@ -184,6 +192,13 @@ dcl-proc serveProcedureResponse ;
 	if schema <= '';
 		pResponse = FormatError (
 			'Need schema and procedure'
+		);
+		return;
+	endif;
+
+	if wordIxNoCase (exposeSchemas : schema :',') <= 0;
+		pResponse = FormatError (
+			'Invalid schema ' + schema
 		);
 		return;
 	endif;
@@ -358,9 +373,11 @@ dcl-proc getParmName;
 	dcl-s method  	    varchar(10);	
 	dcl-s specificName  varchar(128);
 	dcl-s parameterName varchar(128);
+	dcl-s parmNumber_   varchar(3);
 
 	method = getServerVar('REQUEST_METHOD');
 	schema  = strUpper(camelToSnakeCase (schema));
+	parmNumber_ = %char(parmNumber);
 
 	// Note: to make the endpoint unique:
 	// 1) a blank has to follow the method name 
@@ -375,9 +392,9 @@ dcl-proc getParmName;
 		and    r.long_comment like '%@Method=' || :method || '%'
 		and    ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
 		  or     r.long_comment like '%@Endpoint=' || :routine  )
-        and    p.long_comment like '%@Parameter=PATH%'
-        order by ordinal_position
-        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
+        and    p.long_comment like '%@Parmlocation=PATH,' || :parmNumber_ || '%';
+//        order by ordinal_position
+//        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
 
 
 	return snakeToCamelCase (parameterName);
@@ -485,7 +502,7 @@ dcl-proc serveListSchemaProcs;
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
 	    where i.number_of_implementations = 1
 		${filterAnnotated}
-		order by r.routine_schema , r.routine_name;
+		order by r.routine_schema , r.routine_name, ordinal_position;
 	`);
 
 	pRoutineTree = reorderResultAsTree (pResult);
@@ -792,13 +809,15 @@ dcl-proc isInputInThisContext;
 
 	dcl-s pathParms varchar(256);
 	dcl-s mode      varchar(10);
+	dcl-s parmLocation char(10);
 
 	pathParms = json_getStr(pParmPath);
 	mode = json_getStr (pParm:'parameter_mode') ;
+	parmLocation = json_getStr(pParm: 'annotations.parmlocation');
 
 	if mode = 'IN'  ;
-		if 	(json_getStr(pParm: 'annotations.Parameter') = 'PATH' and pathParms > '')
-		or  (json_getStr(pParm: 'annotations.Parameter') = ''     and pathParms = '');
+		if 	(%subst( parmLocation : 1: 4)  = 'PATH' and pathParms > '')
+		or  ((parmLocation = '' or parmLocation = 'QUERY') and pathParms = '');
 			return *ON;
 		endif;
 	elseif mode = 'INOUT' ;
@@ -819,10 +838,12 @@ dcl-proc getPathParms;
 
 	dcl-ds iterParms  	likeds(json_iterator);  
 	dcl-s pathParms  	varchar(256);
+	dcl-s parmLocation  char(10);
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ; 
-		if 	json_getStr(iterParms.this: 'annotations.Parameter') = 'PATH';
+		parmLocation = json_getStr(iterParms.this: 'annotations.parmlocation'); 
+		if 	%subst(parmLocation : 1: 4) = 'PATH';
 			pathParms += '/{' 
 				+ snakeToCamelCase(
 					json_getStr(iterParms.this: 'parameter_name')
@@ -843,6 +864,22 @@ dcl-proc openApiProlog ;
 	dcl-pi *n pointer;
 	end-pi;
 
+	dcl-s url  varchar(256);
+	dcl-s host varchar(256);
+	dcl-s protocol varchar(256);
+	dcl-s prefix  varchar(256);
+
+
+	protocol = getHeader ('X-Forwarded-Proto');
+
+	if protocol > '';
+		host     = getHeader ('host');
+		prefix   = getHeader ('X-Forwarded-Prefix');
+		url = protocol + '://' + host + prefix;
+	else;
+		url = getServerVar('SERVER_URI');
+	endif; 
+
 	return  json_parseString(`{
 		"openapi": "3.0.1",
 		"info": {
@@ -851,7 +888,7 @@ dcl-proc openApiProlog ;
 		},
 		"servers": [
 			{
-				"url": "${ getServerVar('SERVER_URI') }",
+				"url": "${ url }",
 				"description": "${ getServerVar('SERVER_SYSTEM_NAME') }"
 			}
 		]
@@ -1056,11 +1093,15 @@ dcl-proc swaggerCommonParmmeters;
 		pMetaParm pointer value;
 	end-pi;
 
+	dcl-s  parmLocation char(10);
+
+	parmLocation = json_getStr(pMetaParm: 'annotations.parmlocation');
+
 	json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
 	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
 	json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
 	json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
-	if 	json_getStr(pMetaParm: 'annotations.Parameter') = 'PATH';
+	if 	%subst(parmLocation: 1 :4) = 'PATH';
 		json_setStr ( pSwaggerParm : 'in'      : 'path');
 	endif;
 	
@@ -1185,14 +1226,19 @@ dcl-proc dataTypeJson;
 	end-pi;
 
 	dcl-s inputType varchar(64);
+	dcl-s userType varchar(256);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
-	 
+
+    userType = json_getstr (pMetaParm : 'data_type_name');
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
+		when %scan('BOOL' :  userType) > 0;
+			return 'boolean';
+
 		when inputType = 'INTEGER' 
 		or   inputType = 'SMALLINT' 
 		or   inputType = 'BIGINT' 
@@ -1229,8 +1275,8 @@ dcl-proc dataFormatJson;
 	dcl-s numericPrecision int (5);
 	 
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
 		when   inputType = 'BIGINT' 
@@ -1280,12 +1326,12 @@ dcl-proc dataTypeAsText;
 
 	 
 	inputType = json_getstr (pMetaParm : 'data_type');
-	numericScale = json_getint (pMetaParm : 'NUMERIC_SCALE'); // Decimals after 
+	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 
-	if json_isnull (pMetaParm : 'NUMERIC_PRECISION');
-		length = json_getint (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH');
+	if json_isnull (pMetaParm : 'numeric_precision');
+		length = json_getint (pMetaParm : 'character_maximum_length');
 	else;
-		length = json_getint (pMetaParm : 'NUMERIC_PRECISION');
+		length = json_getint (pMetaParm : 'numeric_precision');
 	endif;
 
 
