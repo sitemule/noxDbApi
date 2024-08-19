@@ -19,7 +19,6 @@
 */
 
 -- First build the sample schema:
-
 call qsys.create_sql_sample('CORPDATA');
  
 -- This is the table we want to do CRUD upon: 
