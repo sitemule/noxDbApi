@@ -119,6 +119,7 @@ dcl-proc main;
 		);
 	endif; 
 
+	resetRootName(); 
 
 end-proc;
 // --------------------------------------------------------------------  
@@ -1406,9 +1407,15 @@ dcl-proc rootName;
 		if  rootName = '';
 			rootName = 'data';
 		endif;
-		json_sqlSetRootName (rootName);  
 	endif;
-	
+	json_sqlSetRootName (rootName);  
 
 	return rootName;
+end-proc;
+
+// ------------------------------------------------------------------------------------
+// reset the rootname to the faule root Name for resultsets
+// ------------------------------------------------------------------------------------
+dcl-proc resetRootName;
+	json_sqlSetRootName ('rows');  
 end-proc;
