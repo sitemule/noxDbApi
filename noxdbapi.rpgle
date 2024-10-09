@@ -92,7 +92,14 @@ dcl-proc main;
 	dcl-s schemaName    varchar(64);
 	dcl-s procName 		varchar(128);
  	
-	rootName(); // TODO for now just initialize; 
+	if getServerVar('REQUEST_METHOD') = 'OPTIONS';
+		setStatus ('200 Options are all wellcome');
+		return;
+	endif;
+
+
+
+	// rootName(); // TODO for now just initialize; 
 
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
@@ -119,7 +126,6 @@ dcl-proc main;
 		);
 	endif; 
 
-	resetRootName(); 
 
 end-proc;
 // --------------------------------------------------------------------  
@@ -249,6 +255,8 @@ dcl-proc serveProcedureResponse ;
 		*ON // Specific 
 	);
 
+	renameResultRoot (pResponse : rootName());
+
 	// The result will be in snake ( as is). JSON is typically Cammel 
 	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
 	iterList = json_setIterator(pResponse);  
@@ -261,8 +269,8 @@ dcl-proc serveProcedureResponse ;
 
 on-exit; 
 
-	if   json_locate (pResponse : rootName) <> *NULL
-	and  json_isnull (pResponse : rootName);
+	if   json_locate (pResponse : rootName()) <> *NULL
+	and  json_isnull (pResponse : rootName());
 		setStatus ('404');
 	elseif json_getstr(pResponse : 'success') = 'false';
 		msg = json_getstr(pResponse: 'message');
@@ -505,7 +513,7 @@ dcl-proc serveListSchemaProcs;
 		${filterAnnotated}
 		order by r.routine_schema , r.routine_name, ordinal_position;
 	`);
-
+	renameResultRoot (pResult : rootName());
 	pRoutineTree = reorderResultAsTree (pResult);
 	pSwagger = buildSwaggerJson (environment : pRoutineTree);
 
@@ -1407,15 +1415,30 @@ dcl-proc rootName;
 		if  rootName = '';
 			rootName = 'data';
 		endif;
+		// Dont use this - it will crumble all other interactions with noxdb
+		// json_sqlSetRootName (rootName);  
 	endif;
-	json_sqlSetRootName (rootName);  
 
 	return rootName;
 end-proc;
+// ------------------------------------------------------------------------------------
+// rename the root Name for resultsets
+// ------------------------------------------------------------------------------------
+dcl-proc renameResultRoot;
 
-// ------------------------------------------------------------------------------------
-// reset the rootname to the faule root Name for resultsets
-// ------------------------------------------------------------------------------------
-dcl-proc resetRootName;
-	json_sqlSetRootName ('rows');  
+	dcl-pi *n pointer;
+		pResult pointer value;
+		rootName varchar(32) const;
+	end-pi;
+
+	dcl-s pJson	pointer;
+
+	pJson = json_locate(pResult : 'rows');
+	if pJson <> *NULL;
+		json_noderename (pJson : rootName);
+		json_setstr (pResult : 'root' : rootName);
+	endif;
+
+	return pResult;
 end-proc;
+	
