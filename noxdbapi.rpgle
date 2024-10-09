@@ -111,7 +111,8 @@ dcl-proc main;
 		serveListSchemaProcs (
 			environment : 
 			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
-			getenvvar('NOXDBAPI_EXPOSE_ROUTINES')
+			getenvvar('NOXDBAPI_EXPOSE_ROUTINES'):
+			getenvvar('NOXDBAPI_EXPOSE_VIEWS')			
 		); 
 	elseif schemaName = 'static_resources' or procName = ''; 
 		serveStatic (environment : schemaName : url);
@@ -122,7 +123,8 @@ dcl-proc main;
 			procName : 
 			url : 
 			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
-			getenvvar('NOXDBAPI_EXPOSE_ROUTINES')
+			getenvvar('NOXDBAPI_EXPOSE_ROUTINES'):
+			getenvvar('NOXDBAPI_EXPOSE_VIEWS')	
 		);
 	endif; 
 
@@ -178,7 +180,9 @@ dcl-proc serveProcedureResponse ;
 		url             varchar(256);
 		exposeSchemas   varchar(256) const options(*varsize);
 		exposeRoutines  varchar(256) const options(*varsize);
+		exposeViews     varchar(256) const options(*varsize);
 	end-pi;
+
 	dcl-s pResponse		pointer;		
 	dcl-s msg 			varchar(512);	
 	dcl-s pPayload      pointer;	
@@ -187,7 +191,9 @@ dcl-proc serveProcedureResponse ;
 	dcl-s pathParm      varchar(256);
 	dcl-s parmList  	varchar(32760);
 	dcl-s sqlStmt   	varchar(32760);
+	dcl-s sep       	varchar(16);
 	dcl-s specificName  varchar(128);
+	dcl-s viewName 		varchar(128);
 	dcl-s pRoutineMeta  pointer;
 	dcl-s len 			int(10);
 	dcl-s parmNum    	int(10);
@@ -231,6 +237,39 @@ dcl-proc serveProcedureResponse ;
 		getQryStrList ( name : value : '*NEXT');
 	enddo;
 
+	// First - do we have is as a view? 
+	if exposeViews = 'ANNOTATED';
+		viewName = getViewByAnnotations ( schema : procName) ;
+	else; 
+		viewName = '';
+	endif;
+
+
+	// First - do we have is as a view? 
+	if viewName > ''; 
+
+		sqlStmt = 'select * from ' +  schema + '.' + viewName;
+
+		sep = ' where ';
+		for parmNum = 1 to 10;
+			pathParm = word ( url: parmNum + 3: '/'); // TODO !! now  path parms start after the endpoint ( word 4 ..) , that will change!!
+			if pathParm = '';
+				leave;
+			endif;
+			sqlStmt += sep + getViewParmName ( schema : viewName : parmNum)
+					+ ' = ' + strQuot(pathParm);
+			sep = ' and ';
+		endfor;
+
+		pResponse = json_sqlResultSet (
+			sqlStmt:
+			1:            // Starting from row. TODO Paging 
+			JSON_ALLROWS: // Number of rows to read. TODO Paging
+			JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR
+		); 
+		return;
+	endif;
+
 	// path parameters given? find the name and add to the payload:
 	if exposeRoutines = 'ANNOTATED';
 		for parmNum = 1 to 10;
@@ -238,10 +277,10 @@ dcl-proc serveProcedureResponse ;
 			if pathParm = '';
 				leave;
 			endif;
-			json_setValue (pPayload : getParmName ( schema : procName : parmNum) : pathParm );
+			json_setValue (pPayload : getProcParmName ( schema : procName : parmNum) : pathParm );
 		endfor;
 	endif;	
-	
+
 	if exposeRoutines = 'ANNOTATED';
 		specificName = getSpecificNameByAnnotations ( schema : procName) ;
 	else;
@@ -255,8 +294,6 @@ dcl-proc serveProcedureResponse ;
 		*ON // Specific 
 	);
 
-	renameResultRoot (pResponse : rootName());
-
 	// The result will be in snake ( as is). JSON is typically Cammel 
 	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
 	iterList = json_setIterator(pResponse);  
@@ -268,6 +305,8 @@ dcl-proc serveProcedureResponse ;
 	return;
 
 on-exit; 
+
+	renameResultRoot (pResponse : rootName());
 
 	if   json_locate (pResponse : rootName()) <> *NULL
 	and  json_isnull (pResponse : rootName());
@@ -350,7 +389,7 @@ dcl-proc getSpecificNameByAnnotations;
 	dcl-s specificName  varchar(128);
 
 	method = getServerVar('REQUEST_METHOD');
-	schema  = strUpper(camelToSnakeCase (schema));
+	schema = strUpper(camelToSnakeCase (schema));
 
 	// Note: to make the endpoint unique:
 	// 1) a blank has to follow the method name 
@@ -367,9 +406,40 @@ dcl-proc getSpecificNameByAnnotations;
 	return schema + '.' + specificName;
 end-proc;
 // ------------------------------------------------------------------------------------
+// get name of the view by the anotation in systables  
+// ------------------------------------------------------------------------------------
+dcl-proc getViewByAnnotations;
+
+	dcl-pi *n varchar(128);
+		schema  varchar(64) value ;
+		routine varchar(128) value ;
+	end-pi;
+
+	dcl-s functionType 	char(1);	
+	dcl-s routineType 	char(10);	
+	dcl-s method  	    varchar(10);	
+	dcl-s viewName      varchar(128);
+
+	method = getServerVar('REQUEST_METHOD');
+	schema = strUpper(camelToSnakeCase (schema));
+
+	// Note: to make the endpoint unique:
+	// 1) a blank has to follow the method name 
+	// 2) The endpoint name has to terminate the textstring 
+	exec sql 
+		select table_name 
+		into   :viewName
+		from qsys2.systables 
+		where table_schema = :schema 
+		and    ( long_comment like '%@Endpoint=' || :routine  || ' %'
+		  or     long_comment like '%@Endpoint=' || :routine  );
+
+	return %trimr(viewName);
+end-proc;
+// ------------------------------------------------------------------------------------
 // get parameter name from a specific routing name by annotations 
 // ------------------------------------------------------------------------------------
-dcl-proc getParmName;
+dcl-proc getProcParmName;
 
 	dcl-pi *n varchar(128);
 		schema  varchar(64) value ;
@@ -401,10 +471,45 @@ dcl-proc getParmName;
 		and    r.long_comment like '%@Method=' || :method || '%'
 		and    ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
 		  or     r.long_comment like '%@Endpoint=' || :routine  )
-        and    p.long_comment like '%@Parmlocation=PATH,' || :parmNumber_ || '%';
+        and    p.long_comment like '%@Location=PATH,' || :parmNumber_ || '%';
 //        order by ordinal_position
 //        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
 
+
+	return snakeToCamelCase (parameterName);
+end-proc;
+// ------------------------------------------------------------------------------------
+// get parameter name from a specific routing name by annotations 
+// ------------------------------------------------------------------------------------
+dcl-proc getViewParmName;
+
+	dcl-pi *n varchar(128);
+		schema     varchar(64) value ;
+		viewName   varchar(128) value ;
+		parmNumber int(5) value;
+	end-pi;
+
+	dcl-s functionType 	char(1);	
+	dcl-s routineType 	char(10);	
+	dcl-s method  	    varchar(10);	
+	dcl-s specificName  varchar(128);
+	dcl-s parameterName varchar(128);
+	dcl-s parmNumber_   varchar(3);
+
+	method = getServerVar('REQUEST_METHOD');
+	schema  = strUpper(camelToSnakeCase (schema));
+	parmNumber_ = %char(parmNumber);
+
+	// Note: to make the endpoint unique:
+	// 1) a blank has to follow the method name 
+	// 2) The endpoint name has to terminate the textstring 
+	exec sql
+		select column_name
+		into   :parameterName
+		from   qsys2.syscolumns 
+		where  table_schema = :schema  
+		and    table_name = :viewName
+        and    long_comment like '%@Location=PATH,' || :parmNumber_ || '%';
 
 	return snakeToCamelCase (parameterName);
 end-proc;
@@ -455,6 +560,7 @@ dcl-proc serveListSchemaProcs;
 		environment 	varchar(64)  const options(*varsize);
 		schemaNameList 	varchar(256) const options(*varsize);
 		exposeRoutines  varchar(256) const options(*varsize);
+		exposeViews     varchar(256) const options(*varsize);
 	end-pi;
 
 	dcl-s pResult      	pointer; 
@@ -465,53 +571,166 @@ dcl-proc serveListSchemaProcs;
 	dcl-s  prevSchema   varchar(64);
 	dcl-s  prevRoutine 	varchar(64);
 	dcl-s  schemaList   varchar(256);
-	dcl-s  filterAnnotated varchar(64);
+	dcl-s  filterAnnotatedRoutines  varchar(64);
+	dcl-s  filterAnnotatedViews     varchar(64);
+	
 
 	// Convert the list to SQL format of "IN" 
 	schemaList = '''' + %scanrpl (',':''',''': schemaNameList) + '''';
 	
 	if exposeRoutines = 'ANNOTATED';
-		filterAnnotated = ' and r.long_comment like ''%@Method%'' ';
+		filterAnnotatedRoutines  = ' and r.long_comment like ''%@Endpoint=%'' ';
+	endif;
+	
+	// Always for now
+	if exposeViews = 'ANNOTATED';
+		filterAnnotatedViews = ' and t.long_comment like ''%@Endpoint=%'' ';
+	elseif exposeViews = 'ALL';
+		filterAnnotatedViews = '';
+	else; // Short-wire 
+		filterAnnotatedViews = ' and 1=2';
 	endif;
 
 	pResult = json_sqlResultSet (`
-		with 
-			routines as ( 
-				select 
-					case function_type
-						when 'S' then 'SCALAR'
-						when 'T' then 'TABLE'
-						else          'PROCEDURE'
-					end routine_type,
-					routine_schema , 
-					routine_name, 
-					specific_schema,
-					specific_name, 
-					long_comment,
-					max_dynamic_result_sets
-					from sysroutines 
-				where routine_schema in (${schemaList}) 
-			), 
-			implementation as ( 
-				select count(*) number_of_implementations, routine_type, routine_schema,routine_name
-				from routines
-				group by routine_type, routine_schema,routine_name
-			)
-		select 
-			i.number_of_implementations,
-			r.routine_type, 
-			r.routine_name,
-			r.long_comment desc,
-			r.max_dynamic_result_sets,
-			p.*
-		from routines r
-		join implementation i 
-			on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
-		left join sysparms p 
-			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
-	    where i.number_of_implementations = 1
-		${filterAnnotated}
-		order by r.routine_schema , r.routine_name, ordinal_position;
+		with routines as ( 
+			select 
+				case function_type
+					when 'S' then 'SCALAR'
+					when 'T' then 'TABLE'
+					else          'PROCEDURE'
+				end routine_type,
+				routine_schema , 
+				routine_name, 
+				specific_schema,
+				specific_name, 
+				long_comment,
+				max_dynamic_result_sets
+				from sysroutines 
+			where routine_schema in (${schemaList}) 
+		), 
+		implementation as ( 
+			select count(*) number_of_implementations, routine_type, routine_schema,routine_name
+			from routines
+			group by routine_type, routine_schema,routine_name
+		),
+		routines_and_parms as (
+			select 
+				i.number_of_implementations,
+				r.routine_type, 
+				r.routine_schema,
+				r.routine_name,
+				r.long_comment desc,
+				'CRUD' as crud,
+				r.max_dynamic_result_sets,
+				p.specific_schema,
+				p.specific_name,
+				p.ordinal_position,
+				p.parameter_mode,
+				p.parameter_name,
+				p.data_type,
+				p.numeric_scale,
+				p.numeric_precision,
+				/* p."CCSID",*/
+				p.character_maximum_length,
+				/* p.character_octet_length,*/
+				/* p.numeric_precision_radix,*/
+				/* p.datetime_precision,*/
+				/* p.is_nullable,*/
+				p.long_comment,
+				/* p.row_type,*/
+				/* p.data_type_schema,*/
+				p.data_type_name
+				/* p.as_locator,*/
+				/* p.iasp_number,*/
+				/* p.normalize_data,*/
+				/* p."DEFAULT"*/
+			from routines r
+			join implementation i 
+				on (r.routine_type, r.routine_schema,r.routine_name) = (i.routine_type, i.routine_schema,i.routine_name)
+			left join sysparms p 
+				on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
+			where i.number_of_implementations = 1
+			${filterAnnotatedRoutines }
+		),
+		views_and_columns as (
+            Select 
+                1 number_of_implementations,
+                'VIEW' routine_type,
+                v.table_schema routine_schema,  
+                v.table_name routine_name, 
+                t.long_comment desc,
+                case when v.is_insertable_into = 'Y' then 'C' else '*' end ||
+                                                          'R'              ||
+                case when v.is_updatable       = 'Y' then 'U' else '*' end ||
+                case when v.is_deletable       = 'Y' then 'D' else '*' end 
+                as crud,
+                1 max_dynamic_result_sets,
+                v.system_view_schema, 
+                v.system_view_name, 
+                c.ordinal_position,
+                /* v.seqno,  */
+                case when c.is_updatable  = 'Y' then 'INOUT' else 'OUT' end parameter_mode,
+                /*  v.check_option,  */
+                /* v.view_definition,  */
+                /* v.is_updatable,  */
+                /* v.is_insertable_into,  */
+                /* v.iasp_number,  */
+                /* v.is_deletable,  */
+                /* v.view_definer,  */
+                /* v.rounding_mode , */
+                c.column_name parameter_name,
+                /*  c.table_name, */
+                /* c.table_owner, */
+                c.data_type,
+                c.numeric_scale,
+                c.numeric_precision,
+                c.character_maximum_length,
+                /* c.length character_maximum_length, */
+                /* c.is_nullable, */
+                /* c.is_updatable, */
+                c.long_comment,
+                /* c.has_default, */
+                /* c.column_heading, */
+                /* c.storage, */
+                /* c.ccsid, */
+                /* c.table_schema, */
+                /* c.column_default, */
+                /* c.character_octet_length, */
+                /* c.numeric_precision_radix, */
+                /* c.datetime_precision, */
+                /* c.column_text, */
+                /* c.system_column_name, */
+                /* c.system_table_name, */
+                /* c.system_table_schema, */
+                /* c.user_defined_type_schema, */
+                c.user_defined_type_name
+                /* c.is_identity, */
+                /* c.identity_generation, */
+                /* c.identity_start, */
+                /* c.identity_increment, */
+                /* c.identity_minimum, */
+                /* c.identity_maximum, */
+                /* c.identity_cycle, */
+                /* c.identity_cache, */
+                /* c.identity_order, */
+                /* c.column_expression, */
+                /* c.hidden, */
+                /* c.has_fldproc */
+            from qsys2.sysviews v 
+			left join qsys2.systables t on (v.table_schema , v.table_name) = (t.table_schema , t.table_name) 
+            join qsys2.syscolumns c on (v.table_schema , v.table_name) = (c.table_schema , c.table_name)
+			where v.table_schema in (${schemaList}) 
+			${filterAnnotatedViews }
+
+        )
+        
+		Select * 
+		from routines_and_parms
+    union all 
+        select * 
+        from views_and_columns 
+        order by routine_schema , routine_name, ordinal_position
+
 	`);
 	renameResultRoot (pResult : rootName());
 	pRoutineTree = reorderResultAsTree (pResult);
@@ -544,6 +763,7 @@ dcl-proc reorderResultAsTree;
 	dcl-s  prevSchemaRoutine varchar(256);
 	dcl-s  schemaRoutine 	 varchar(256);
 	dcl-s  description  	 varchar(2000);
+	dcl-s  crud     		 char(4);
 
 	pTree  = json_newArray ();
 
@@ -556,6 +776,7 @@ dcl-proc reorderResultAsTree;
 		SchemaRoutine =  schema + '/' + routine;
 		routineType = json_getStr(iterList.this: 'routine_type' );
 		description = json_getStr(iterList.this: 'desc');
+		crud        = json_getStr(iterList.this: 'crud');
 
 		if  schemaRoutine <> prevSchemaRoutine
 		or  routineType   <> prevRoutineType;
@@ -567,6 +788,7 @@ dcl-proc reorderResultAsTree;
 			json_setStr  (pRoutine : 'routine':routine );
 			json_setStr  (pRoutine : 'routine_type': routineType);
 			json_setStr  (pRoutine : 'description' : description ) ;
+			json_setStr  (pRoutine : 'crud' : crud) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
 			
@@ -818,15 +1040,15 @@ dcl-proc isInputInThisContext;
 
 	dcl-s pathParms varchar(256);
 	dcl-s mode      varchar(10);
-	dcl-s parmLocation char(10);
+	dcl-s location char(10);
 
 	pathParms = json_getStr(pParmPath);
 	mode = json_getStr (pParm:'parameter_mode') ;
-	parmLocation = json_getStr(pParm: 'annotations.parmlocation');
+	location = json_getStr(pParm: 'annotations.location');
 
 	if mode = 'IN'  ;
-		if 	(%subst( parmLocation : 1: 4)  = 'PATH' and pathParms > '')
-		or  ((parmLocation = '' or parmLocation = 'QUERY') and pathParms = '');
+		if 	(%subst( location : 1: 4)  = 'PATH' and pathParms > '')
+		or  ((location = '' or location = 'QUERY') and pathParms = '');
 			return *ON;
 		endif;
 	elseif mode = 'INOUT' ;
@@ -847,12 +1069,12 @@ dcl-proc getPathParms;
 
 	dcl-ds iterParms  	likeds(json_iterator);  
 	dcl-s pathParms  	varchar(256);
-	dcl-s parmLocation  char(10);
+	dcl-s location  char(10);
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ; 
-		parmLocation = json_getStr(iterParms.this: 'annotations.parmlocation'); 
-		if 	%subst(parmLocation : 1: 4) = 'PATH';
+		location = json_getStr(iterParms.this: 'annotations.location'); 
+		if 	%subst(location : 1: 4) = 'PATH';
 			pathParms += '/{' 
 				+ snakeToCamelCase(
 					json_getStr(iterParms.this: 'parameter_name')
@@ -1102,15 +1324,15 @@ dcl-proc swaggerCommonParmmeters;
 		pMetaParm pointer value;
 	end-pi;
 
-	dcl-s  parmLocation char(10);
+	dcl-s  location char(10);
 
-	parmLocation = json_getStr(pMetaParm: 'annotations.parmlocation');
+	location = json_getStr(pMetaParm: 'annotations.location');
 
 	json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
 	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
 	json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
 	json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
-	if 	%subst(parmLocation: 1 :4) = 'PATH';
+	if 	%subst(location: 1 :4) = 'PATH';
 		json_setStr ( pSwaggerParm : 'in'      : 'path');
 	endif;
 	

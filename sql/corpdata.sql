@@ -369,4 +369,18 @@ call corpdata.employee_fetch (
 select *
 from   corpdata.employee
 where empno = '000050';
+
+-- Expose a view as as service:
+select * from CORPDATA.VEMP;
+
+comment on table CORPDATA.VEMP  is 'Employees @Endpoint=employeeList';
+comment on column CORPDATA.VEMP.EMPNO is 'Unique employee ID @Location=PATH,1';
+
+
+
+
+select * from qsys2.systables 
+where table_schema = 'CORPDATA'
+and table_name = 'VEMP';
+
  
