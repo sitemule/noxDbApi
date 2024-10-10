@@ -1,6 +1,6 @@
 {
-	"id":"NOXDBAPI",
-	"server":"http://dksrv134:7007",
+	"id":"NOXDBAP2",
+	"server":"http://mensa:7008",
 	"env":"ICEBREAK",
-	"path":"/prj/noxdbAPI"
+	"path":"/prj/noxDbApi"
 }
