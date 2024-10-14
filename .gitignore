@@ -1,3 +1,6 @@
 ﻿*PRINT
 debug
 .vscode/opt.json
+.vscode/opt.json
+sql/parms.sql
+sql/work.sql
