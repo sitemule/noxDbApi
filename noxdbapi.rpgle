@@ -5,13 +5,13 @@ ctl-opt decEdit('0,') datEdit(*YMD.) main(main);
 ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 
 /* -----------------------------------------------------------------------------
-	Service . . . : Stored procedure router 
+	Service . . . : Stored procedure and views router  
 	Author  . . . : Niels Liisberg 
 	Company . . . : System & Method A/S
 	
 
-	noxdbapi is a simple way to expose stored procedures as RESTservice. 
-	Note - you might contain the services you expose either by access fsecurity
+	noxdbapi is a simple way to expose stored procedures and views as RESTservice. 
+	Note - you might contain the services you expose either by access security
 	or by user defined access rules added to this code - Whatever serves you best.
 
 	
@@ -22,7 +22,8 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY':'QC2LE');
 	CRTICEPGM STMF('/prj/noxDbApi/noxDbApi.rpgle') SVRID(noxDbApi)
 
 
-	2) Any procedures can be used - also supporting if that returns one dynamic result set:
+	2) Any procedures or view can be used - 
+	   Procedures also supported  if that returns one dynamic result set:
 	
 	Example:
 	

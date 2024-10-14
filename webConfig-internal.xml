@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <configuration>
 
-
 	<!--
-		this is en envvar NoxDbAPI is looking for when exposing Views,UDTF,Procedure and scalarfunction
+		this is en envvar NoxDbAPI is looking for when exposing UDTF,Procedure and scalarfunction
 		Be carefull not to expose to much - i.e. never expose QSYS2  
 	 -->  
 
 	<envvar>
-		<var name="NOXDBAPI_EXPOSE_SCHEMAS"  value="NOXDBAPI"/>
+		<var name="NOXDBAPI_EXPOSE_SCHEMAS"  value="YXDB"/>
+		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
 		<var name="NOXDBAPI_EXPOSE_VIEWS"    value="ANNOTATED"/>
 		<var name="NOXDBAPI_ROOT_NAME"       value="data"/>
 	</envvar>
 	
+
 
 	<!--
 		The response content will be compressed if the size is greater the threshold limit and if the client supports the algorithme. 
@@ -36,8 +37,8 @@
 		serveAlwaysUTF8="true"
 		serveAlwaysChunks="true"
 	/>	
-					
-
+				
+	
 	<!--
 		Routing is mapped regex patterns for applications an their coresponding program names.
 		When "strict=true" only applications from this list is served
