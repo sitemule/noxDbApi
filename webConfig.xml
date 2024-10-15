@@ -9,6 +9,7 @@
 
 	<envvar>
 		<var name="NOXDBAPI_EXPOSE_SCHEMAS"  value="NOXDBAPI"/>
+		<var name="NOXDBAPI_EXPOSE_ROUTINES" value="ANNOTATED"/>
 		<var name="NOXDBAPI_EXPOSE_VIEWS"    value="ANNOTATED"/>
 		<var name="NOXDBAPI_ROOT_NAME"       value="data"/>
 	</envvar>
