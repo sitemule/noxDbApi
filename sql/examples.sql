@@ -1,6 +1,61 @@
-﻿--drop  procedure  noxDbApi.services_info_list;
+﻿-- example 1: Simple as possible - create a view as a service:
+-- Note: The view is a "read only" so it will automaticall expose a GET method
+-------------------------------------------------------------------------------
+drop view noxdbapi.services_info_view;
+create or replace view  noxdbapi.services_info_view as
+    select * from qsys2.services_info;
 
-create or replace procedure  noxDbApi.services_info_list  (
+comment on table  noxDbApi.services_info_view is 'Services info view @Endpoint=servicesInfoView';
+comment on column noxDbApi.services_info_view.service_name  is 'Search services by name @Location=PATH,1';
+
+select * from sysviews where table_schema = 'NOXDBAPI';
+
+-- example 2: create a CRUD view as a service:
+-- Note: The view is a "read only" so it will automaticall expose a GET method
+--drop view noxdbapi.customer_view
+-------------------------------------------------------------------------------
+create or replace view  noxdbapi.customer_view as
+    select * from qiws.QCUSTCDT; 
+
+select * from noxdbapi.customer_view;
+comment on table  noxDbApi.customer_view is 'Customer view service @Endpoint=customerView';
+comment on column noxDbApi.customer_view.cusnum  is 'Customer ID @Location=PATH,1';
+
+---------------------------------------------------------------
+-- UDTF 
+--drop function noxDbApi.services_info_categories;
+create or replace function noxDbApi.services_info_categories  (
+    search_category varchar(20) default null
+)
+returns table ( 
+   category_name varchar(32),
+   number_of_services int
+)
+language sql 
+
+begin
+
+    declare method varchar(20); 
+
+    return 
+        select service_category , count(*) 
+        from   qsys2.services_info
+        where  search_category is null 
+        or     upper(service_category) like upper(search_category) concat '%'
+        group by service_category;
+
+end; 
+
+comment on function noxDbApi.services_info_categories is 'Services info Categories UDTF @Endpoint=servicesInfoCategories';
+comment on parameter function noxDbApi.services_info_categories (search_category is 'Search service category by name @Location=PATH,1');
+
+select * from table( noxDbApi.services_info_categories (search_category => 'work'));
+select * from table( noxDbApi.services_info_categories ());
+
+
+-- example 4: Procedure as as service
+-------------------------------------------------------------------------------
+create or replace procedure  noxDbApi.services_info_proc  (
     in service_search_name  varchar(20) default null
 )
 language sql 
@@ -19,45 +74,16 @@ begin
 
 end; 
 
-comment on procedure noxDbApi.services_info_list is 'Services info List';
-comment on parameter noxDbApi.services_info_list (service_search_name is 'Search services by name');
+comment on procedure noxDbApi.services_info_proc is 'Services info procedure @Method=GET @Endpoint=servicesInfoProcedure';
+comment on parameter noxDbApi.services_info_proc (service_search_name is 'Search services by name @Location=PATH,1');
 
 -- Test if the procedure works in ACS:
 
-call noxDbApi.services_info_list (service_search_name => 'ptf');
-call noxDbApi.services_info_list ();
+call noxDbApi.services_info_proc (service_search_name => 'ptf');
+call noxDbApi.services_info_proc ();
 
----------------------------------------------------------------
--- UDTF 
---drop function noxDbApi.services_info_categories;
-create or replace function noxDbApi.services_info_categories  (
-    search_category varchar(20) default null
-)
-returns table ( 
-   category_name varchar(32),
-   number_of_services int
-)
-language sql 
-
-begin
-
-    declare method varchar(20); 
-    
-
-    return 
-        select service_category , count(*) 
-        from   qsys2.services_info
-        where  search_category is null 
-        or     upper(service_category) like upper(search_category) concat '%'
-        group by service_category;
-
-end; 
-
-comment on function noxDbApi.services_info_categories is 'Services info Categories';
-comment on parameter function noxDbApi.services_info_categories (search_category is 'Search service category by name');
-
-select * from table( noxDbApi.services_info_categories (search_category => 'work'));
-select * from table( noxDbApi.services_info_categories ());
+select * from qsys2.sysroutines where specific_schema = 'NOXDBAPI';  
+drop specific routine  noxdbapi.SERVICES_INFO_PROC;
 
 ----------------------------------------------------------------------
 -- Scalar function 
