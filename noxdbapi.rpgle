@@ -349,12 +349,13 @@ dcl-proc serveProcedureResponse ;
 	);
 
 	// The result will be in snake ( as is). JSON is typically Cammel 
-	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  	
+	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  
+	/* 	
 	iterList = json_setIterator(pResponse);  
 	dow json_ForEach(iterList) ;  
 		json_noderename (iterList.this : snakeToCamelCase ( json_getname (iterList.this) ));
 	enddo; 
-
+	*/ 
 
 	return;
 
@@ -455,9 +456,10 @@ dcl-proc getSpecificNameByAnnotations;
 		into   :specificName
 		from   qsys2.sysroutines
 		where  routine_schema = :schema 
-		and    long_comment like '%@Method=' || :method || '%'
-		and    ( long_comment like '%@Endpoint=' || :routine  || ' %'
-		  or     long_comment like '%@Endpoint=' || :routine  );
+		and  ( long_comment not like '%@Method=%'   
+		  or   long_comment like '%@Method=' || :method || '%')
+		and  ( long_comment like '%@Endpoint=' || :routine  || ' %'
+		  or   long_comment like '%@Endpoint=' || :routine  );
 
 	return schema + '.' + specificName;
 end-proc;
@@ -524,9 +526,10 @@ dcl-proc getProcParmName;
 		join sysparms p 
 			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
 		where  r.specific_schema = :schema 
-		and    r.long_comment like '%@Method=' || :method || '%'
-		and    ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
-		  or     r.long_comment like '%@Endpoint=' || :routine  )
+		and  ( r.long_comment not like '%@Method=' 
+			or r.long_comment like '%@Method=' || :method || '%') 
+		and  ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
+		  or   r.long_comment like '%@Endpoint=' || :routine  )
         and    p.long_comment like '%@Location=PATH,' || :parmNumber_ || '%';
 //        order by ordinal_position
 //        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 

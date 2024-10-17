@@ -52,6 +52,10 @@ comment on parameter function noxDbApi.services_info_categories (search_category
 select * from table( noxDbApi.services_info_categories (search_category => 'work'));
 select * from table( noxDbApi.services_info_categories ());
 
+select * from qsys2.sysroutines where specific_schema = 'NOXDBAPI';  
+drop specific routine  noxdbapi.services_info_categories;
+
+
 
 -- example 4: Procedure as as service
 -------------------------------------------------------------------------------
