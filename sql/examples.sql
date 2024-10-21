@@ -22,7 +22,7 @@ comment on table  noxDbApi.customer_view is 'Customer view service @Endpoint=cus
 comment on column noxDbApi.customer_view.cusnum  is 'Customer ID @Location=PATH,1';
 
 ---------------------------------------------------------------
--- UDTF 
+-- example 3: UDTF userdefined table funciton 
 --drop function noxDbApi.services_info_categories;
 create or replace function noxDbApi.services_info_categories  (
     search_category varchar(20) default null
@@ -57,8 +57,8 @@ drop specific routine  noxdbapi.services_info_categories;
 
 
 
--- example 4: Procedure as as service
 -------------------------------------------------------------------------------
+-- example 4: Procedure as as service
 create or replace procedure  noxDbApi.services_info_proc  (
     in service_search_name  varchar(20) default null
 )
@@ -104,9 +104,9 @@ begin
 
 end; 
 
-comment on function noxDbApi.divide is 'Divide two numbers and return the result ';
-comment on parameter noxDbApi.divide (dividend is 'Dividend');
-comment on parameter noxDbApi.divide (divisor is 'Divisor');
+comment on function noxDbApi.divide is 'Divide two numbers and return the result @Method=POST @Endpoint=divide';
+comment on parameter noxDbApi.divide (dividend is 'Dividend @Location=QUERY');
+comment on parameter noxDbApi.divide (divisor is 'Divisor @Location=QUERY');
 
 -- Test if the procedure works in ACS:
 values noxDbApi.divide ( dividend => 100 , divisor => 10);

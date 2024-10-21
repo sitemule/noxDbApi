@@ -83,13 +83,13 @@ end;
 -- The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface:
 -- The annotation @Endpoint is the name of the endpoint
 -- The annotation @Location describes whe the parameter is found: 
---  PATH=In the path of the url next to the endpoint. 
+--  PATH=In the path comma number of the url next to the endpoint. 
 --  QUERY=Query string parameter
 --  FORM=In the form  
 --  BODY=In the JSON payload
 
 comment on function corpdata.employee_fetch  is 'Read an employee or search for employees @Method=GET @Endpoint=employee';
-comment on parameter function corpdata.employee_fetch  (empno is 'Unique employee ID @Location=PATH');
+comment on parameter function corpdata.employee_fetch  (empno is 'Unique employee ID @Location=PATH,1');
 comment on parameter function corpdata.employee_fetch  (search_employee_name is 'Search for employees by name or get one specific row');
 
 select * from table( corpdata.employee_fetch  (search_employee_name => 'john'));
@@ -169,7 +169,7 @@ end;
 -- The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface:
 -- The annotation @Endpoint is the name of the endpoint
 comment on procedure corpdata.employee_update is 'Update Employee information @Method=PUT @Endpoint=employee';
-comment on parameter procedure corpdata.employee_update  (empno is 'Unique employee ID @Location=PATH');
+comment on parameter procedure corpdata.employee_update  (empno is 'Unique employee ID @Location=PATH,1');
 
 
 
@@ -341,13 +341,13 @@ end;
 -- The annotation @Method in the description makes the procedure visible in the openAPI( swagger) user interface:
 -- The annotation @Endpoint is the name of the endpoint
 -- The annotation @Location describes whe the parameter is found: 
---  PATH=In the path of the url next to the endpoint. 
+--  PATH=In the path comma number of the url next to the endpoint. 
 --  QUERY=Query string parameter
 --  FORM=In the form  
 --  BODY=In the JSON payload
 
 comment on function corpdata.employee_delete  is 'Delete an employee  @Method=DELETE @Endpoint=employee';
-comment on parameter function corpdata.employee_delete  (empno is 'Unique employee ID @Location=PATH');
+comment on parameter function corpdata.employee_delete  (empno is 'Unique employee ID @Location=PATH,1');
 
 values corpdata.employee_delete  (empno => '999999');
 

@@ -902,11 +902,15 @@ dcl-proc buildSwaggerJson;
 		routinetype = json_getStr (iterList.this:'routine_type');
 		select; 
 			when routinetype = 'VIEW';
-				buildSwaggerViewJson (environment: iterList.this : pOpenApi);
+				buildSwaggerForView (environment: iterList.this : pOpenApi);
 			when routinetype = 'TABLE';
-				buildSwaggerUdtfJson (environment: iterList.this : pOpenApi);
-			other;
-				buildSwaggerRoutinesJson (environment: iterList.this : pOpenApi);
+				buildSwaggerForUdtf (environment: iterList.this : pOpenApi);
+			when routinetype = 'SCALAR';
+				buildSwaggerForScalar (environment: iterList.this : pOpenApi);
+			when routinetype = 'PROCEDURE';
+				buildSwaggerForProcedure (environment: iterList.this : pOpenApi);
+			//other;
+			//	buildSwaggerRoutinesJson (environment: iterList.this : pOpenApi);
 		endsl;
 	enddo;
 
@@ -917,11 +921,11 @@ dcl-proc buildSwaggerJson;
 end-proc;
 
 // ------------------------------------------------------------------------------------
-// buildSwaggerViewJson
+// buildSwaggerForView
 // ------------------------------------------------------------------------------------
-dcl-proc buildSwaggerViewJson;
+dcl-proc buildSwaggerForView;
 
-	dcl-pi buildSwaggerViewJson;		
+	dcl-pi buildSwaggerForView;		
 		environment varchar(64) const options(*varsize);
 		pRoutine 	pointer value;   
 		pOpenApi 	pointer value;  
@@ -935,19 +939,18 @@ dcl-proc buildSwaggerViewJson;
 	dcl-s Routine 		  varchar(64);
 	dcl-s description     varchar(1024);
 	dcl-s endpoint        varchar(256);
-	dcl-s inRefSchema     varchar(256);
+	dcl-s schemaInput     varchar(256);
+	dcl-s schemaOutput    varchar(256);
 	dcl-s pParmsInput 	  pointer;
 	dcl-s pParmsOutput 	  pointer;	
 	dcl-s pPropertyInput  pointer;
 	dcl-s pPropertyOutput pointer;
 	dcl-s pParameters 	  pointer;
-	dcl-s outputReference varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s pMethod 		  pointer;
 	dcl-s pathName        varchar(256);
 	dcl-s howDesc         varchar(256);
 	dcl-s pRoute          pointer;	
-	dcl-s pPathParms  	  pointer;
 	dcl-s pRequestBody    pointer;
 	dcl-s pParms          pointer;
 	dcl-s pProperty       pointer;
@@ -971,7 +974,7 @@ dcl-proc buildSwaggerViewJson;
 	endpoint 	= json_getstr ( pRoutine : 'annotations.endpoint');
 
 	// row structure:
-	pParms = json_moveObjectInto  ( pSchemas  :  endpoint  : json_newObject() ); 
+	pParms = json_moveObjectInto  ( pSchemas  :  capitalize(endpoint)  : json_newObject() ); 
 	json_setStr(pParms : 'type' : 'object');
 	pProperty  = json_moveObjectInto  ( pParms  :  'properties' : json_newObject() ); 
 
@@ -981,8 +984,8 @@ dcl-proc buildSwaggerViewJson;
 	enddo;
 
 	// Input:
-	inRefSchema = endpoint + 'Input' ;
-	pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+	schemaInput = capitalize ( endpoint + 'Input' );
+	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 	json_setStr(pParmsInput : 'type' : 'object');
 	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
@@ -1026,9 +1029,9 @@ dcl-proc buildSwaggerViewJson;
 				pRoute = getRoute (pPaths : '/' + environment + '/' + schema + '/' + endpoint + pathParmsStr (pRoutine : j));
 
 				if method = 'get';
-					OutputReference = '"$ref":"#/components/schemas/'  + endpoint + 'Output"';	
+					schemaOutput =  capitalize( endpoint)  + 'Output';	
 				else;
-					OutputReference = '"$ref":"#/components/schemas/Ok"';
+					schemaOutput = 'OkResponse';
 				endif;	
 
 
@@ -1036,10 +1039,9 @@ dcl-proc buildSwaggerViewJson;
 					schema:
 					endpoint:
 					description + howDescription ( method : j):
-					routine:
 					method:
-					inRefschema:
-					OutputReference
+					schemaInput:
+					schemaOutput
 				);
 
 				addPathParameters ( pMethod : pRoutine : j );
@@ -1048,16 +1050,15 @@ dcl-proc buildSwaggerViewJson;
 			endfor;
 		endif;
 	endfor;
-	json_delete(pPathParms);
 
 
 end-proc;
 // ------------------------------------------------------------------------------------
-// buildSwaggerUdtfJson
+// buildSwaggerForUdtf
 // ------------------------------------------------------------------------------------
-dcl-proc buildSwaggerUdtfJson;
+dcl-proc buildSwaggerForUdtf;
 
-	dcl-pi buildSwaggerUdtfJson;		
+	dcl-pi buildSwaggerForUdtf;		
 		environment varchar(64) const options(*varsize);
 		pRoutine 	pointer value;   
 		pOpenApi 	pointer value;  
@@ -1071,19 +1072,18 @@ dcl-proc buildSwaggerUdtfJson;
 	dcl-s Routine 		  varchar(64);
 	dcl-s description     varchar(1024);
 	dcl-s endpoint        varchar(256);
-	dcl-s inRefSchema     varchar(256);
+	dcl-s schemaInput     varchar(256);
 	dcl-s pParmsInput 	  pointer;
 	dcl-s pParmsOutput 	  pointer;	
 	dcl-s pPropertyInput  pointer;
 	dcl-s pPropertyOutput pointer;
 	dcl-s pParameters 	  pointer;
-	dcl-s outputReference varchar(256);
+	dcl-s schemaOutput    varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s pMethod 		  pointer;
 	dcl-s pathName        varchar(256);
 	dcl-s howDesc         varchar(256);
 	dcl-s pRoute          pointer;	
-	dcl-s pPathParms  	  pointer;
 	dcl-s pRequestBody    pointer;
 	dcl-s pParms          pointer;
 	dcl-s pProperty       pointer;
@@ -1105,9 +1105,14 @@ dcl-proc buildSwaggerUdtfJson;
 	routine 	= json_getStr ( pRoutine : 'routine'); 
 	description = json_getStr ( pRoutine : 'description');
 	endpoint 	= json_getstr ( pRoutine : 'annotations.endpoint');
+	method      = strLower(json_getstr ( pRoutine : 'annotations.method'));
+	if method <= '';
+		method = 'get';
+	endif;
+
 
 	// row structure:
-	pParms = json_moveObjectInto  ( pSchemas  :  endpoint  : json_newObject() ); 
+	pParms = json_moveObjectInto  ( pSchemas  :  capitalize(endpoint)  : json_newObject() ); 
 	json_setStr(pParms : 'type' : 'object');
 	pProperty  = json_moveObjectInto  ( pParms  :  'properties' : json_newObject() ); 
 
@@ -1117,8 +1122,8 @@ dcl-proc buildSwaggerUdtfJson;
 	enddo;
 
 	// Input:
-	inRefSchema = endpoint + 'Input' ;
-	pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+	schemaInput = capitalize(endpoint) + 'Input' ;
+	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 	json_setStr(pParmsInput : 'type' : 'object');
 	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
@@ -1128,33 +1133,128 @@ dcl-proc buildSwaggerUdtfJson;
 	enddo;
 
 	pathParms = countPathParms (pRoutine);
-
 	setResponseSchema (pSchemas : endpoint );
-	
-	method = 'get';
 		
-	
 	for j = 0 to pathParms;
 
 		pRoute = getRoute (pPaths : '/' + environment + '/' + schema + '/' + endpoint + pathParmsStr (pRoutine : j));
 
-		OutputReference = '"$ref":"#/components/schemas/'  + endpoint + 'Output"';	
+		schemaOutput = capitalize(endpoint) + 'Output';	
 
 		pMethod = openApiMethod (
 			schema:
 			endpoint:
 			description + howDescription ( method : j):
-			routine:
 			method:
-			inRefschema:
-			OutputReference
+			schemaInput:
+			schemaOutput
 		);
 
 		addPathParameters ( pMethod : pRoutine : j );
 
 		json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
 	endfor;
-	json_delete(pPathParms);
+
+
+end-proc;
+// ------------------------------------------------------------------------------------
+// buildSwaggerForScalar
+// ------------------------------------------------------------------------------------
+dcl-proc buildSwaggerForScalar;
+
+	dcl-pi buildSwaggerForScalar;		
+		environment varchar(64) const options(*varsize);
+		pRoutine 	pointer value;   
+		pOpenApi 	pointer value;  
+	end-pi;
+
+	dcl-ds iterParms   	  likeds(json_iterator); 
+	dcl-s pPaths  		  pointer;
+	dcl-s pSchemas 	      pointer;
+ 
+	dcl-s Schema   		  varchar(64);
+	dcl-s Routine 		  varchar(64);
+	dcl-s description     varchar(1024);
+	dcl-s endpoint        varchar(256);
+	dcl-s schemaInput     varchar(256);
+	dcl-s pParmsInput 	  pointer;
+	dcl-s pParmsOutput 	  pointer;	
+	dcl-s pPropertyInput  pointer;
+	dcl-s pPropertyOutput pointer;
+	dcl-s pParameters 	  pointer;
+	dcl-s schemaOutput    varchar(256);
+	dcl-s method          varchar(16);
+	dcl-s pMethod 		  pointer;
+	dcl-s pathName        varchar(256);
+	dcl-s howDesc         varchar(256);
+	dcl-s pRoute          pointer;	
+	dcl-s pRequestBody    pointer;
+	dcl-s pParms          pointer;
+	dcl-s pProperty       pointer;
+	dcl-s pItems          pointer;
+	dcl-s pItem           pointer;
+	dcl-s crud 			  char(4);
+	dcl-s i				  int(5);	
+	dcl-s j				  int(5);	
+	dcl-s k				  int(5);	
+	dcl-s pathParmsIx 	  int(5);
+	dcl-s pathParmsStart  int(5);
+	dcl-s pathParmsEnd    int(5);
+	dcl-s location  	  char(10);
+	dcl-s pathParms		  int(5);
+
+	pPaths  	= json_locate ( pOpenApi : 'paths');
+	pSchemas 	= json_locate ( pOpenApi : 'components.schemas');
+	schema 		= json_getStr ( pRoutine : 'schema');
+	routine 	= json_getStr ( pRoutine : 'routine'); 
+	description = json_getStr ( pRoutine : 'description');
+	endpoint 	= json_getstr ( pRoutine : 'annotations.endpoint');
+	method      = strLower(json_getstr ( pRoutine : 'annotations.method'));
+	if method <= '';
+		method = 'get';
+	endif;
+	
+
+	// row structure:
+	pParms = json_moveObjectInto  ( pSchemas  :  capitalize(endpoint)  : json_newObject() ); 
+	json_setStr(pParms : 'type' : 'object');
+	pProperty  = json_moveObjectInto  ( pParms  :  'properties' : json_newObject() ); 
+
+	iterParms = json_setIterator(pRoutine:'parms');  
+	dow json_ForEach(iterParms) ;  
+		if isInputInThisContext(iterParms.this : *NULL );
+			json_nodeInsert ( pProperty : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+		endif;
+	enddo;
+
+	pathParms = countPathParms (pRoutine);
+	setResponseSchema (pSchemas : endpoint );
+	
+	for j = 0 to pathParms;
+
+		pRoute = getRoute (pPaths : '/' + environment + '/' + schema + '/' + endpoint + pathParmsStr (pRoutine : j));
+		schemaOutput = capitalize(endpoint) + 'Output';	
+		pMethod = openApiMethod (
+			schema:
+			endpoint:
+			description + ' - Return single value': 
+			method:
+			schemaInput:
+			schemaOutput
+		);
+
+		pParameters =addPathParameters ( pMethod : pRoutine : j );
+
+		iterParms = json_setIterator(pRoutine:'parms');  
+		dow json_ForEach(iterParms) ;  
+			if isInputInThisContext(iterParms.this : *NULL );
+				json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+			endif;
+		enddo;
+
+
+		json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
+	endfor;
 
 
 end-proc;
@@ -1208,7 +1308,7 @@ dcl-proc howDescription;
 	endsl;
 end-proc;
 // ------------------------------------------------------------------------------------
-dcl-proc buildSwaggerRoutinesJson;
+dcl-proc buildSwaggerForProcedure;
 
 	dcl-pi *n;
 		environment varchar(64) const options(*varsize);
@@ -1221,7 +1321,6 @@ dcl-proc buildSwaggerRoutinesJson;
 	dcl-ds iterPathParms  likeds(json_iterator);
 	dcl-s pPaths  		  pointer;
 	dcl-s pSchemas 	      pointer;
-	dcl-s pPathParms  	  pointer;
 	dcl-s pParms  		  pointer;
 	dcl-s pParm   		  pointer;
 	dcl-s pMethod 		  pointer;
@@ -1236,13 +1335,170 @@ dcl-proc buildSwaggerRoutinesJson;
 	dcl-s RoutineType 	  varchar(10);
 	dcl-s RoutineTypeNc   varchar(10);
 	dcl-s resultSets      int(5);
-	dcl-s OutputReference varchar(256);
 	dcl-s methods         varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s endpoint        varchar(256);
 	dcl-s pathName        varchar(256);
-	dcl-s outRefSchema    varchar(256);
-	dcl-s inRefSchema     varchar(256);
+	dcl-s schemaOutput    varchar(256);
+	dcl-s schemaInput     varchar(256);
+	dcl-s pAnnotations    pointer;
+	dcl-s description     varchar(1024);
+	dcl-s pathParms		  int(5);
+	dcl-s i				  int(5);	
+	dcl-s j				  int(5);	
+	dcl-s k				  int(5);	
+ 
+	pPaths  		= json_locate ( pOpenApi : 'paths');
+	pSchemas 	  	= json_locate ( pOpenApi : 'components.schemas');
+
+	schema      = json_getStr (pRoutine:'schema');
+	routine     = json_getStr (pRoutine:'routine'); 
+	routinetype = json_getStr (pRoutine:'routine_type');
+	resultSets  = json_getInt (pRoutine:'result_sets');
+	description = json_getStr (pRoutine:'description');
+	pAnnotations= json_locate (pRoutine:'annotations');
+	endpoint    = json_getstr (pAnnotations : 'endpoint');
+
+	method = strLower(json_getstr ( pAnnotations : 'method'));
+	if method <= '';
+		if resultSets >= 1;       // Procedure with result set (open cursor)  
+			method = 'get';
+		else;
+			method = 'post';
+		endif;
+	endif;
+
+	schemaInput  = capitalize(endpoint) + capitalize(method) + 'Input'  ;
+
+	if resultSets >= 1;
+		schemaOutput = 'DynamicResponse';
+	else;
+		schemaOutput = capitalize(endpoint) + capitalize(method) + 'Output' ;
+	endif; 
+
+
+	// Input:
+	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
+	json_setStr(pParmsInput : 'type' : 'object');
+	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+	iterParms = json_setIterator(pRoutine:'parms');  
+	dow json_ForEach(iterParms) ;  
+		json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+	enddo;
+
+	
+	pathParms = countPathParms (pRoutine);
+	setResponseSchema (pSchemas : capitalize(endpoint) + capitalize(method) );
+
+		
+	for j = 0 to pathParms;
+
+		pRoute = getRoute (pPaths : '/' + environment + '/' + schema + '/' + endpoint + pathParmsStr (pRoutine : j));
+
+		pMethod = openApiMethod (
+			schema:
+			endpoint:
+			description + ' - Procedure ':
+			method:
+			schemaInput:
+			schemaOutput
+		);
+
+		pParameters = addPathParameters ( pMethod : pRoutine : j );
+
+		if json_getInt (pRoutine : 'implementations') > 1;
+			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
+				json_getStr (pRoutine : 'implementations') + 
+				' implementations and can not be executed. Can not decide which to use'); 
+		endif;
+
+		if method = 'get' or method = 'delete' ;
+
+			iterParms = json_setIterator(pRoutine:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if isInputInThisContext(iterParms.this : *NULL );
+					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
+				endif;
+			enddo;
+
+
+			pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
+			json_setStr(pParmsOutput : 'type' : 'object');
+			pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+
+			iterParms = json_setIterator(iterList.this:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
+					json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				endif;
+			enddo;
+		else;	
+
+
+			pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
+			json_setStr(pParmsInput : 'type' : 'object');
+			pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+			if resultSets = 0;
+				pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
+				json_setStr(pParmsOutput : 'type' : 'object');
+				pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+			endif;
+
+			iterParms = json_setIterator(pRoutine:'parms');  
+			dow json_ForEach(iterParms) ;  
+				if isInputInThisContext(iterParms.this : iterPathParms.this );
+					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+				endif;
+				if resultSets = 0;
+					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
+					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
+						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
+					endif;
+				endif;
+			enddo;
+		endif; 
+		json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
+
+	endfor;
+
+end-proc;
+// ------------------------------------------------------------------------------------
+/* 
+dcl-proc buildSwaggerRoutinesJson;
+
+	dcl-pi *n;
+		environment varchar(64) const options(*varsize);
+		pRoutine 	pointer value;   
+		pOpenApi 	pointer value;  
+	end-pi;
+
+	dcl-ds iterList   	  likeds(json_iterator);  
+	dcl-ds iterParms   	  likeds(json_iterator);  
+	dcl-ds iterPathParms  likeds(json_iterator);
+	dcl-s pPaths  		  pointer;
+	dcl-s pSchemas 	      pointer;
+	dcl-s pParms  		  pointer;
+	dcl-s pParm   		  pointer;
+	dcl-s pMethod 		  pointer;
+	dcl-s pPropertyInput  pointer;
+	dcl-s pPropertyOutput pointer;
+	dcl-s pParameters 	  pointer;
+	dcl-s pParmsInput 	  pointer;
+	dcl-s pParmsOutput 	  pointer;	
+	dcl-s pRoute          pointer;
+	dcl-s Schema   		  varchar(64);
+	dcl-s Routine 		  varchar(64);
+	dcl-s RoutineType 	  varchar(10);
+	dcl-s RoutineTypeNc   varchar(10);
+	dcl-s resultSets      int(5);
+	dcl-s methods         varchar(256);
+	dcl-s method          varchar(16);
+	dcl-s endpoint        varchar(256);
+	dcl-s pathName        varchar(256);
+	dcl-s schemaOutput    varchar(256);
+	dcl-s schemaInput     varchar(256);
 	dcl-s pAnnotations    pointer;
 	dcl-s description     varchar(1024);
 	dcl-s pathParms		  int(5);
@@ -1259,7 +1515,7 @@ dcl-proc buildSwaggerRoutinesJson;
 	description = json_getStr (pRoutine:'description');
 
 	pAnnotations = json_locate (pRoutine:'annotations');
-	routineTypeNc = NameCase (routinetype);
+	routineTypeNc = capitalize (routinetype);
 	endpoint = json_getstr ( pAnnotations : 'endpoint');
 	if endpoint <= ''; 
 		endpoint = routine + routineTypeNc;
@@ -1277,11 +1533,11 @@ dcl-proc buildSwaggerRoutinesJson;
 	endif;
 
 
-	outRefSchema = routine + nameCase(method) + 'Output' + routineTypeNc;
-	inRefschema  = Routine + nameCase(method) + 'Input'  + routineTypeNc;
+	schemaOutput = routine + capitalize(method) + 'Output' + routineTypeNc;
+	schemaInput  = Routine + capitalize(method) + 'Input'  + routineTypeNc;
 
 	// Input:
-	pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 	json_setStr(pParmsInput : 'type' : 'object');
 	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
@@ -1294,11 +1550,10 @@ dcl-proc buildSwaggerRoutinesJson;
 	
 	resultSets  = json_getInt(pRoutine:'result_sets');
 	if resultSets >= 1;
-		OutputReference = '"$ref":"#/components/schemas/DynamicResponse"';
+		schemaOutput = 'DynamicResponse';
 	else;
-		OutputReference = '"$ref":"#/components/schemas/'  + outRefSchema + '"';	
+		schemaOutput = schemaOutput ;	
 	endif; 
-
 
 	pathParms = countPathParms (pRoutine);
 
@@ -1320,10 +1575,9 @@ dcl-proc buildSwaggerRoutinesJson;
 			schema:
 			endpoint:
 			description:
-			routine:
 			method:
-			inRefschema:
-			OutputReference
+			schemaInput:
+			schemaOutput
 		);
 
 		addPathParameters ( pMethod : pRoutine : j );
@@ -1348,7 +1602,7 @@ dcl-proc buildSwaggerRoutinesJson;
 			enddo;
 
 
-			pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+			pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
 			json_setStr(pParmsOutput : 'type' : 'object');
 			pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
@@ -1381,12 +1635,12 @@ dcl-proc buildSwaggerRoutinesJson;
 
 			json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
 
-			pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+			pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 			json_setStr(pParmsInput : 'type' : 'object');
 			pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
 			if resultSets = 0;
-				pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+				pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
 				json_setStr(pParmsOutput : 'type' : 'object');
 				pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 			endif;
@@ -1405,15 +1659,15 @@ dcl-proc buildSwaggerRoutinesJson;
 			enddo;
 		endif; 
 	endfor;
-	json_delete(pPathParms);
 
 end-proc;
+*/ 
 // ------------------------------------------------------------------------------------
 // addPathParameters
 // ------------------------------------------------------------------------------------
 dcl-proc addPathParameters;
 
-	dcl-pi addPathParameters ;
+	dcl-pi addPathParameters pointer;
 		pMethod  pointer value; 
 		pRoutine pointer value; 
 		length	 int(5)  value;
@@ -1437,6 +1691,7 @@ dcl-proc addPathParameters;
 	enddo;
 
 	json_moveObjectInto (pMethod : 'parameters' : pParameters);
+	return pParameters;
 
 end-proc;
 
@@ -1527,13 +1782,12 @@ dcl-proc buildSwaggerJsonOrg;
 	dcl-s RoutineType 	  varchar(10);
 	dcl-s RoutineTypeNc   varchar(10);
 	dcl-s resultSets      int(5);
-	dcl-s OutputReference varchar(256);
 	dcl-s methods         varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s endpoint        varchar(256);
 	dcl-s pathName        varchar(256);
-	dcl-s outRefSchema    varchar(256);
-	dcl-s inRefSchema     varchar(256);
+	dcl-s schemaOutput    varchar(256);
+	dcl-s schemaInput     varchar(256);
 	dcl-s pAnnotations    pointer;
 	dcl-s description     varchar(1024);
 
@@ -1576,14 +1830,14 @@ dcl-proc buildSwaggerJsonOrg;
 		endif;
 
 
-		outRefSchema = routine + nameCase(method) + 'Output' + routineTypeNc;
-		inRefschema  = Routine + nameCase(method) + 'Input'  + routineTypeNc;
+		schemaOutput = routine + nameCase(method) + 'Output' + routineTypeNc;
+		schemaInput  = Routine + nameCase(method) + 'Input'  + routineTypeNc;
 		
 		resultSets  = json_getInt(iterList.this:'result_sets');
 		if resultSets >= 1;
-			OutputReference = '"$ref":"#/components/schemas/DynamicResponse"';
+			schemaOutput = '"$ref":"#/components/schemas/DynamicResponse"';
 		else;
-			OutputReference = '"$ref":"#/components/schemas/'  + outRefSchema + '"';	
+			schemaOutput = '"$ref":"#/components/schemas/'  + schemaOutput + '"';	
 		endif; 
 
 
@@ -1621,10 +1875,9 @@ dcl-proc buildSwaggerJsonOrg;
 					schema:
 					endpoint:
 					description:
-					routine:
 					method:
-					inRefschema:
-					OutputReference
+					schemaInput:
+					schemaOutput
 				);
 
 				if json_getInt (iterList.this : 'implementations') > 1;
@@ -1647,7 +1900,7 @@ dcl-proc buildSwaggerJsonOrg;
 					enddo;
 
 
-					pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+					pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
 					json_setStr(pParmsOutput : 'type' : 'object');
 					pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 
@@ -1680,12 +1933,12 @@ dcl-proc buildSwaggerJsonOrg;
 
 					json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
 
-					pParmsInput = json_moveObjectInto  ( pSchemas  :  inRefSchema   : json_newObject() ); 
+					pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 					json_setStr(pParmsInput : 'type' : 'object');
 					pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
 
 					if resultSets = 0;
-						pParmsOutput = json_moveObjectInto  ( pSchemas  :  outRefSchema  : json_newObject() ); 
+						pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
 						json_setStr(pParmsOutput : 'type' : 'object');
 						pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
 					endif;
@@ -1855,14 +2108,14 @@ dcl-proc openApiMethod;
 		schema varchar(32) const;
 		endpoint varchar(256) const;
 		description varchar(1024) const;
-		routine varchar(128) const;
 		method varchar(32) const;
-		inRefSchema varchar(256) const;
-		OutputReference varchar(256) const;
+		schemaInput varchar(256) const;
+		schemaOutput varchar(256) const;
 	end-pi;
 
 	dcl-s ref   		varchar(10) inz('$ref');
 	dcl-s pMethod	pointer;
+
 
 	pMethod = json_parseString(
 		`{
@@ -1875,7 +2128,7 @@ dcl-proc openApiMethod;
 				"content": {
 					"application/json": {
 						"schema": {
-							"${ref}": "#/components/schemas/${inRefSchema}"
+							"${ref}": "#/components/schemas/${ schemaInput }"
 						}
 					}
 				},
@@ -1887,7 +2140,7 @@ dcl-proc openApiMethod;
 					"content": {
 						"application/json": {
 							"schema": {
-								${OutputReference}
+								"${ref}": "#/components/schemas/${ schemaOutput }"
 							}
 						}
 					}
@@ -1900,7 +2153,7 @@ dcl-proc openApiMethod;
 					"content": {
 						"application/json": {
 							"schema": {
-								"${ref}": "#/components/schemas/NotFound"
+								"${ref}": "#/components/schemas/NotFoundResponse"
 							}
 						}
 					}
@@ -1910,7 +2163,7 @@ dcl-proc openApiMethod;
 					"content": {
 						"application/json": {
 							"schema": {
-								"${ref}": "#/components/schemas/Error"
+								"${ref}": "#/components/schemas/ErrorResponse"
 							}
 						}
 					}
@@ -1920,7 +2173,7 @@ dcl-proc openApiMethod;
 					"content": {
 						"application/json": {
 							"schema": {
-								"${ref}": "#/components/schemas/Error"
+								"${ref}": "#/components/schemas/ErrorResponse"
 							}
 						}
 					}
@@ -1943,11 +2196,13 @@ dcl-proc setResponseSchema;
 
 	dcl-pi *n;
 		pSchemas    pointer value;
-		schemaName  varchar(256) const;
+		schemaName  varchar(256) value;
 	end-pi;
 
 	dcl-s pNode	pointer;
 	dcl-s ref   varchar(10) inz('$ref');
+
+	schemaName = capitalize (schemaName);
 
 	pNode = json_parseString( `
 	{
@@ -2008,7 +2263,7 @@ dcl-proc definitions;
 				}
 			}
 		},
-		"Ok": {
+		"OkResponse": {
 			"type": "object",
 			"properties": {
 				"success": {
@@ -2017,7 +2272,7 @@ dcl-proc definitions;
 				}			
 			}
 		},
-		"Error": {
+		"ErrorResponse": {
 			"type": "object",
 			"properties": {
 				"success": {
@@ -2032,7 +2287,7 @@ dcl-proc definitions;
 				}
 			}
 		},
-		"NotFound": {
+		"NotFoundResponse": {
 			"type": "object",
 			"properties": {
 				"success": {
@@ -2441,4 +2696,22 @@ dcl-proc renameResultRoot;
 
 	return pResult;
 end-proc;
-	
+
+// ------------------------------------------------------------------------------------
+// Upercase first letter 
+// ------------------------------------------------------------------------------------
+dcl-proc capitalize;
+
+	dcl-pi *n varchar(256) ;
+		str varchar(256) const options(*varsize);
+	end-pi;
+
+	if %len(str) >= 2;
+		return strUpper ( %subst(str : 1 : 1) ) + %subst(str : 2 );
+	elseif %len(str) = 1;
+		return strUpper ( %subst(str : 1 : 1) ) ;
+	else; 
+		return '';
+	endif;
+
+end-proc;
