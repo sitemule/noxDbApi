@@ -851,7 +851,7 @@ dcl-proc reorderResultAsTree;
 			json_setStr  (pRoutine : 'crud' : crud) ;
 			json_setInt  (pRoutine : 'result_sets' : json_getInt(iterList.this: 'max_dynamic_result_sets'));
 			json_setInt  (pRoutine : 'implementations' : json_getInt(iterList.this: 'number_of_implementations'));
-			
+			setHttpMethods ( pRoutine);
 			pParms = json_moveObjectInto  ( pRoutine  :  'parms' : json_newArray() ); 
 			json_arrayPush(pTree : pRoutine);
 		endif;
@@ -872,6 +872,41 @@ dcl-proc reorderResultAsTree;
 
 	return pTree;
 
+
+end-proc;
+// ------------------------------------------------------------------------------------
+// setHttpMethods - it is defalt by the access to the table
+// Set the CRUD operator depending on which http methods given
+// ------------------------------------------------------------------------------------
+dcl-proc setHttpMethods;
+
+	dcl-pi setHttpMethods ;
+		pRoutine pointer value;
+	end-pi;
+
+	dcl-s crud	char(4) inz('****');
+	dcl-s methods varchar(64);
+	
+	methods = json_getStr ( pRoutine : 'annotations.method');
+	if methods <= '';
+		return;
+	endif;
+
+	if %scan('POST':methods) > 0;
+		%subst(crud : 1 : 1) = 'C';
+	endif;
+	if %scan('GET':methods) > 0;
+		%subst(crud : 2 : 1) = 'R';
+	endif;
+	if %scan('PUT':methods) > 0;
+		%subst(crud : 3 : 1) = 'C';
+	endif;
+	if %scan('DELETE':methods) > 0;
+		%subst(crud : 4 : 1) = 'D';
+	endif;
+
+	json_setStr  (pRoutine : 'crud' : crud) ;
+	
 
 end-proc;
 // --------------------------------------------------------------------  
