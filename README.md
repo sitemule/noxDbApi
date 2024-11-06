@@ -12,7 +12,7 @@ open source project. You will see in the code that it is actually noxDB that is 
 
 ## What is supported
 
-noxDbAPI supports Db2 stored procedures, UDTF and scalar functions. 
+noxDbAPI supports Db2 stored procedures, UDTF and scalar functions and views. 
 
 Stored procedures will be handled by http "GET" operations if they: 
 1) have only input parameters
@@ -25,6 +25,11 @@ Stored procedures will be handled by http "POST" operations if they:
 1) have input parameters
 2) have output parameters
 3) have inout parameters
+
+Views will be handled by any "POST,PUT,GET,DELETE" if:
+1) Only "GET" if the view is "read only"
+2) "POST,PUT,GET,DELETE" if you explicitly describe it in the "@methods" annotation
+ 
 
 Both input and output is JSON payloads 
 
@@ -58,6 +63,17 @@ git -c http.sslVerify=false clone https://github.com/sitemule/noxDbAPI.git /prj/
 ``` 
 
 This will create a directory `/prj/noxDbAPI` on your IFS.
+
+Install the IceBreak CE (Community Edition) server from here: 
+```
+https://webfiles.system-method.com/download/IceBreak/?C=M;O=D
+```
+Or restore the savefile from here:
+```
+https://webfiles.system-method.com/download/IceBreak/savf/
+https://webfiles.system-method.com/download/IceBreak/savf/readme.md
+.. and follow instructions .. 
+```
 
 Now on a 5250 terminal:
 

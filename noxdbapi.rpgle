@@ -884,7 +884,7 @@ dcl-proc setHttpMethods;
 		pRoutine pointer value;
 	end-pi;
 
-	dcl-s crud	char(4) inz('****');
+	dcl-s crud	char(4);
 	dcl-s methods varchar(64);
 	
 	methods = json_getStr ( pRoutine : 'annotations.method');
@@ -892,17 +892,20 @@ dcl-proc setHttpMethods;
 		return;
 	endif;
 
-	if %scan('POST':methods) > 0;
-		%subst(crud : 1 : 1) = 'C';
+	crud = json_getStr ( pRoutine : 'crud');
+
+	// Now remove access if not explicitly defined
+	if %scan('POST':methods) = 0;
+		%subst(crud : 1 : 1) = '*';
 	endif;
-	if %scan('GET':methods) > 0;
-		%subst(crud : 2 : 1) = 'R';
+	if %scan('GET':methods) = 0;
+		%subst(crud : 2 : 1) = '*';
 	endif;
-	if %scan('PUT':methods) > 0;
-		%subst(crud : 3 : 1) = 'C';
+	if %scan('PUT':methods) = 0;
+		%subst(crud : 3 : 1) = '*';
 	endif;
-	if %scan('DELETE':methods) > 0;
-		%subst(crud : 4 : 1) = 'D';
+	if %scan('DELETE':methods) = 0;
+		%subst(crud : 4 : 1) = '*';
 	endif;
 
 	json_setStr  (pRoutine : 'crud' : crud) ;
