@@ -1,16 +1,16 @@
-﻿<%@ free="*YES" language="SQLRPGLE" owner="QPGMR"%>
+<%@ free="*YES" language="SQLRPGLE" owner="QPGMR"%>
 <%
 ctl-opt copyright('System & Method (C), 2019-2025');
 ctl-opt decEdit('0,') datEdit(*YMD.) main(main); 
 ctl-opt bndDir('NOXDB':'ICEUTILITY');
 
 /* -----------------------------------------------------------------------------
-	Service . . . : Stored procedure and views router  
+	Service . . . : Service programs as service endpoints
 	Author  . . . : Niels Liisberg 
 	Company . . . : System & Method A/S
 	
 
-	noxdbapi is a simple way to expose stored procedures and views as RESTservice. 
+	noxPrcApi is a simple way to expose service program procedures as RESTservice. 
 	Note - you might contain the services you expose either by access security
 	or by user defined access rules added to this code - Whatever serves you best.
 
@@ -22,66 +22,18 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY');
 	CRTICEPGM STMF('/prj/noxdbapi/noxprcapi.rpgle') SVRID(noxdbapi)
 
 
-	2) Any procedures or view can be used - 
-	   Procedures also supported  if that returns one dynamic result set:
 	
-	Example 1:
+	4) Enable noxPrcApi in your web config:
 	
-	Build a service endpoint for the view QSYS2.SERVICES_INFO
-	---------------------------------------------------------
-	create or replace view  NOXDBAPI.SERVICES_INFO as
-		select * from QSYS2.SERVICES_INFO;
-
-	comment on table  noxDbApi.services_info is 'Services info view @Endpoint=servicesInfo';
-	comment on column noxDbApi.services_info.service_name  is 'Search services by name @Location=PATH,1';
-	
-
-
-	Example 2:
-
-	Build a test stored procedure - paste this into ACS:
-
-	-- Procedure returns a resultset
-	--------------------------------
-	CREATE or REPLACE PROCEDURE  noxDbApi.services_info_list  (
-		in service_search_name  varchar(20) default null
-	)
-	LANGUAGE SQL 
-	DYNAMIC RESULT SETS 1
-
-	BEGIN
-
-		declare c1 cursor with return for
-		select * 
-		from   qsys2.services_info
-		where  service_search_name is null 
-		or     upper(service_name) like '%' concat upper(service_search_name) concat '%';
-
-		open c1;
-
-	END; 
-
-	comment on procedure noxDbApi.services_info_list is 'Services info List';
-	comment on parameter noxDbApi.services_info_list (service_search_name is 'Search services by name');
-
-	3) Test if the procedure works in ACS:
-
-	call noxDbApi.services_info_list (service_search_name => 'ptf');
-	call noxDbApi.services_info_list ();
-
-
-	
-	4) Enable noxdbapi in your web config:
-	
-	Add the noxdbapi in the routing section in you webconfig.xml file in your server root:
+	Add the noxPrcApi in the routing section in you webconfig.xml file in your server root:
 
 	<routing strict="false">
-		<map pattern="^/noxdbapi/" pgm="noxdbapi" lib="*LIBL" />
+		<map pattern="^/noxPrcApi/" pgm="noxPrcApi" lib="*LIBL" />
 	</routing>
 
 
 
-	5) Load the openAPI / (swagger) interface for the noxDbApi schema
+	5) Load the openAPI / (swagger) interface for the noxPrcApi schema
 	
 	http://MY_IBM_I:7007/noxdbapi/
 
@@ -90,7 +42,7 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY');
 
 	By     Date       PTF     Description
 	------ ---------- ------- ---------------------------------------------------
-	NLI    23.05.2023         New program
+	NLI    13.04.2025         New program
 	----------------------------------------------------------------------------- */
  /include qasphdr,jsonparser
  /include qasphdr,iceutility
@@ -109,8 +61,6 @@ dcl-proc main;
 		setStatus ('200 Options are all wellcome');
 		return;
 	endif;
-
-	// rootName(); // TODO for now just initialize; 
 
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
@@ -621,7 +571,7 @@ dcl-proc serveListSchemaProcs;
 		exposeViews     varchar(256) const options(*varsize);
 	end-pi;
 
-	dcl-s pResult      	pointer; 
+	dcl-s pRoutineGraph      	pointer; 
 	dcl-s pSwagger     	pointer; 
 	
 	dcl-ds iterServicePgm  	likeds(json_iterator);
@@ -638,18 +588,18 @@ dcl-proc serveListSchemaProcs;
     dcl-s procNum	    int(10);
     dcl-s pPcmlProc	    pointer;
     
-	pResult = json_sqlResultSet (`
+	pRoutineGraph = json_sqlResultSet (`
         select
-            X.objlongschema  service_schema,                 
-            x.objname        service_name,
-            ifnull(x.objtext, '') long_comment
+            objlongschema  service_schema,                 
+            objname        service_name,
+            ifnull(objtext, '') long_comment
         from 
             table (qsys2.object_statistics(
                 '${schemaNameList}','SRVPGM','*ALLSIMPLE')
-            ) X
+            ) 
 	`);
 
-    iterServicePgm = json_setIterator(pResult);  
+    iterServicePgm = json_setIterator(pRoutineGraph);  
     dow json_ForEach(iterServicePgm) ;  
         pMeta = json_ProcedureMeta (
             json_getStr(iterServicePgm.this: 'service_schema') : 
@@ -657,12 +607,13 @@ dcl-proc serveListSchemaProcs;
             '*ALL'
         );
 
+		// No metadata - do not expose it
 		If pMeta = *NULL;
 			json_delete(iterServicePgm.this);
 			Iter;
 		EndIf;
 		
-        json_writeXmlStmf(pMeta:'/home/sam/pcml.xml':1208:*off);
+        json_writeXmlStmf(pMeta:'/prj/noxdbapi/debug/pcml.xml':1208:*off);
 
 		pProcArr = json_newArray();
         procNum = json_getInt(pMeta:'pcml.program[UBOUND]');
@@ -693,14 +644,14 @@ dcl-proc serveListSchemaProcs;
 		json_moveObjectInto(iterServicePgm.this:'procedures':pProcArr);
     enddo; 
 
-	renameResultRoot (pResult : rootName());
-    json_writeJsonStmf(pResult:'/home/sam/presult.json':1208);
-	pSwagger = buildSwaggerJson (environment : pResult);
+	renameResultRoot (pRoutineGraph : rootName());
+    json_writeJsonStmf(pRoutineGraph:'/prj/noxdbapi/debug/routine-graph.json':1208);
+	pSwagger = buildSwaggerJson (environment : pRoutineGraph);
 
 	SetContentType ('application/json');
 	responseWriteJson(pSwagger);
 
-	json_delete (pResult);
+	json_delete (pRoutineGraph);
 	json_delete (pSwagger);
 
 end-proc;
@@ -722,7 +673,6 @@ dcl-proc buildSwaggerJson;
 
 	pOpenApi  =  openApiProlog();
 	
-
 	pPaths      = json_moveObjectInto  ( pOpenApi    : 'paths'      : json_newObject()); 
 	pComponents = json_moveObjectInto  ( pOpenApi    : 'components' : json_newObject()); 
 	pSchemas    = json_moveObjectInto  ( pComponents : 'schemas'    : json_newObject()); 
@@ -732,7 +682,11 @@ dcl-proc buildSwaggerJson;
 	dow json_ForEach(iterServicePgm) ;  
         iterProcedures = json_setIterator(iterServicePgm.this: 'procedures');  
         dow json_ForEach(iterProcedures);  
-            buildSwaggerForProcedure (environment: iterProcedures.this : pOpenApi);
+            buildSwaggerForProcedure (
+                snakeToCamelCase( environment): 
+                iterProcedures.this : 
+                pOpenApi
+            );
         enddo;
 	enddo;
 
@@ -775,9 +729,12 @@ dcl-proc buildSwaggerForProcedure;
 	dcl-s methods         varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s endpoint        varchar(256);
+	dcl-s endpointPath    varchar(256);
 	dcl-s pathName        varchar(256);
 	dcl-s schemaOutput    varchar(256);
 	dcl-s schemaInput     varchar(256);
+	dcl-s schemaResponse  varchar(256);
+	dcl-s schemaRequest   varchar(256);
 	dcl-s pAnnotations    pointer;
 	dcl-s description     varchar(1024);
 	dcl-s pathParms		  int(5);
@@ -792,40 +749,49 @@ dcl-proc buildSwaggerForProcedure;
     pProcedures = json_getParent (pRoutine);
     pServicePgm = json_getParent (pProcedures);
 
-	pPaths  		= json_locate ( pOpenApi : 'paths');
-	pSchemas 	  	= json_locate ( pOpenApi : 'components.schemas');
+	pPaths  	= json_locate ( pOpenApi : 'paths');
+	pSchemas 	= json_locate ( pOpenApi : 'components.schemas');
 
 	schema      = json_getStr (pServicePgm:'service_schema');
 	service     = json_getStr (pServicePgm:'service_name'); 
 	description = json_getStr (pServicePgm:'long_comment');
 	procedure 	= json_getStr (pRoutine   :'name'); 
 
-    endpoint = snakeToCamelCase(service) + NameCase (procedure);
+    endpointPath = snakeToCamelCase(service) + '/' + NameCase (procedure);
+    endpoint     = snakeToCamelCase(service) + NameCase (procedure);
 
 	method = 'post';
 
-	schemaInput  = endpoint + NameCase(method) + 'Input'  ;
-	schemaOutput = endpoint + NameCase(method) + 'Output' ;
-
-	// Input:
-	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
-	json_setStr(pParmsInput : 'type' : 'object');
-	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+	schemaInput    = endpoint + NameCase(method) + 'Input'  ;
+	schemaOutput   = endpoint + NameCase(method) + 'Output' ;
+	schemaRequest  = endpoint + NameCase(method) + 'Request'  ;
+	schemaResponse = endpoint + NameCase(method) + 'Response' ;
 	
-	setResponseSchema (pSchemas : capitalize(endpoint) + capitalize(method) );
+	json_moveObjectInto  ( 
+		pSchemas  :  
+		schemaResponse : 
+		buildResponseSchema (schemaOutput)
+	); 
 
 	pMethod = openApiMethod (
 			schema:
 			endpoint:
 			description + ' - Procedure ':
 			method:
-			schemaInput:
-			schemaOutput
+			schemaInput: // "schemaRequest for complex types  !!
+			schemaResponse 
 		);
+
+	pRoute = getRoute (pPaths : '/' + environment + '/' + schema + '/' + endpointPath );
 
 	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
 	json_setStr(pParmsInput : 'type' : 'object');
 	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
+
+	pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput   : json_newObject() ); 
+	json_setStr(pParmsOutput : 'type' : 'object');
+	pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
+
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ;  
@@ -840,195 +806,28 @@ dcl-proc buildSwaggerForProcedure;
 
 end-proc;
 // ------------------------------------------------------------------------------------
-/* 
-dcl-proc buildSwaggerRoutinesJson;
+// getRoute
+// ------------------------------------------------------------------------------------
+dcl-proc getRoute;
 
-	dcl-pi *n;
-		environment varchar(64) const options(*varsize);
-		pRoutine 	pointer value;   
-		pOpenApi 	pointer value;  
+	dcl-pi getRoute pointer ;
+		pPaths pointer value;
+		pathName varchar(256) const;
 	end-pi;
 
-	dcl-ds iterList   	  likeds(json_iterator);  
-	dcl-ds iterParms   	  likeds(json_iterator);  
-	dcl-ds iterPathParms  likeds(json_iterator);
-	dcl-s pPaths  		  pointer;
-	dcl-s pSchemas 	      pointer;
-	dcl-s pParms  		  pointer;
-	dcl-s pParm   		  pointer;
-	dcl-s pMethod 		  pointer;
-	dcl-s pPropertyInput  pointer;
-	dcl-s pPropertyOutput pointer;
-	dcl-s pParameters 	  pointer;
-	dcl-s pParmsInput 	  pointer;
-	dcl-s pParmsOutput 	  pointer;	
-	dcl-s pRoute          pointer;
-	dcl-s Schema   		  varchar(64);
-	dcl-s Routine 		  varchar(64);
-	dcl-s RoutineType 	  varchar(10);
-	dcl-s RoutineTypeNc   varchar(10);
-	dcl-s resultSets      int(5);
-	dcl-s methods         varchar(256);
-	dcl-s method          varchar(16);
-	dcl-s endpoint        varchar(256);
-	dcl-s pathName        varchar(256);
-	dcl-s schemaOutput    varchar(256);
-	dcl-s schemaInput     varchar(256);
-	dcl-s pAnnotations    pointer;
-	dcl-s description     varchar(1024);
-	dcl-s pathParms		  int(5);
-	dcl-s i				  int(5);	
-	dcl-s j				  int(5);	
-	dcl-s k				  int(5);	
- 
-	pPaths  		= json_locate ( pOpenApi : 'paths');
-	pSchemas 	  	= json_locate ( pOpenApi : 'components.schemas');
+	dcl-s pRoute	pointer;
 
-	schema =  json_getStr(pRoutine:'service_schema');
-	routine = json_getStr(pRoutine:'service_name'); 
-	description = json_getStr (pRoutine:'long_comment');
-
-	method = strLower(json_getstr ( pAnnotations : 'method'));
-	if method <= '';
-		if routinetype = 'SCALAR' // scalar
-		or routinetype = 'TABLE'  // table
-		or resultSets >= 1;       // Procedure with result set (open cursor)  
-			method = 'get';
-		else;
-			method = 'post';
-		endif;
+	// When the endpoint exists - we just append each method
+	pRoute = json_locate  ( pPaths : '"' + pathName +'"');
+	if pRoute = *NULL; 
+		pRoute = json_newObject();
+		json_noderename (pRoute : pathName);
+		json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
 	endif;
 
-
-	schemaOutput = routine + capitalize(method) + 'Output' + routineTypeNc;
-	schemaInput  = Routine + capitalize(method) + 'Input'  + routineTypeNc;
-
-	// Input:
-	pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
-	json_setStr(pParmsInput : 'type' : 'object');
-	pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
-
-	iterParms = json_setIterator(pRoutine:'parms');  
-	dow json_ForEach(iterParms) ;  
-		json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-	enddo;
-
-
-	
-	resultSets  = json_getInt(pRoutine:'result_sets');
-	if resultSets >= 1;
-		schemaOutput = 'DynamicResponse';
-	else;
-		schemaOutput = schemaOutput ;	
-	endif; 
-
-	pathParms = countPathParms (pRoutine);
-
-		
-	for j = 0 to pathParms;
-
-
-		// When the endpoint exists - we just append each method
-		pathName = '/' + environment + '/' + schema + '/' + endpoint + pathParmsStr (pRoutine : j);
-		pRoute = json_locate  ( pPaths : '"' + pathName +'"');
-		if pRoute = *NULL; 
-			pRoute = json_newObject();
-			json_noderename (pRoute : pathName);
-			json_nodeInsert ( pPaths  : pRoute : JSON_LAST_CHILD); 
-		endif;
-
-
-		pMethod = openApiMethod (
-			schema:
-			endpoint:
-			description:
-			method:
-			schemaInput:
-			schemaOutput
-		);
-
-		addPathParameters ( pMethod : pRoutine : j );
-
-		if json_getInt (iterList.this : 'implementations') > 1;
-			json_setStr (pMethod  : 'summary' : 'This operation is polymorpich with  ' + 
-				json_getStr (iterList.this : 'implementations') + 
-				' implementations and can not be executed. Can not decide which to use'); 
-		endif;
-
-		if method = 'get' or method = 'delete' ;
-			json_delete ( json_locate(pMethod : 'requestBody')); // get do not have a body
-
-			json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
-			pParameters = json_moveObjectInto ( pMethod : 'parameters': json_newArray());
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if isInputInThisContext(iterParms.this : iterPathParms.this );
-					json_arrayPush ( pParameters  : swaggerQueryParm (iterParms.this) ); 
-				endif;
-			enddo;
-
-
-			pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
-			json_setStr(pParmsOutput : 'type' : 'object');
-			pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-
-			if routinetype = 'SCALAR'; // scalar
-
-				pParm = json_newObject(); 
-				json_noderename (pParm : 'success' );
-				json_setStr    (pParm : 'name'        : 'success');
-				json_setStr    (pParm : 'type'        : 'boolean');
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
-
-				pParm = swaggerParm (
-					json_getChild( 
-						json_locate (iterList.this:'parms') 
-					)
-				);
-				json_noderename (pParm : rootName());
-				json_nodeInsert ( pPropertyOutput  : pParm  : JSON_LAST_CHILD); 
-
-
-			else;
-				iterParms = json_setIterator(iterList.this:'parms');  
-				dow json_ForEach(iterParms) ;  
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT'  ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-				enddo;
-			endif;
-		else;	
-
-			json_moveObjectInto  ( pRoute  :  method  : pMethod ); 
-
-			pParmsInput = json_moveObjectInto  ( pSchemas  :  schemaInput   : json_newObject() ); 
-			json_setStr(pParmsInput : 'type' : 'object');
-			pPropertyInput  = json_moveObjectInto  ( pParmsInput  :  'properties' : json_newObject() ); 
-
-			if resultSets = 0;
-				pParmsOutput = json_moveObjectInto  ( pSchemas  :  schemaOutput  : json_newObject() ); 
-				json_setStr(pParmsOutput : 'type' : 'object');
-				pPropertyOutput  = json_moveObjectInto  ( pParmsOutput  :  'properties' : json_newObject() ); 
-			endif;
-
-			iterParms = json_setIterator(iterList.this:'parms');  
-			dow json_ForEach(iterParms) ;  
-				if isInputInThisContext(iterParms.this : iterPathParms.this );
-					json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-				endif;
-				if resultSets = 0;
-					if json_getStr (iterParms.this:'parameter_mode') = 'OUT' 
-					or json_getStr (iterParms.this:'parameter_mode') = 'INOUT' ;
-						json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-					endif;
-				endif;
-			enddo;
-		endif; 
-	endfor;
-
+	return pRoute;
 end-proc;
-*/ 
+
 // ------------------------------------------------------------------------------------
 // addPathParameters
 // ------------------------------------------------------------------------------------
@@ -1410,7 +1209,8 @@ dcl-proc openApiProlog ;
 		"openapi": "3.0.1",
 		"info": {
 			"title": "${ getServerVar('SERVER_DESCRIPTION') }",
-			"version": "${ getServerVar('SERVER_SOFTWARE')}"
+			"version": "${ getServerVar('SERVER_SOFTWARE')}",
+            "description": "Service endpoints made easy. powered by Sitemule"
 		},
 		"servers": [
 			{
@@ -1535,29 +1335,22 @@ dcl-proc openApiMethod;
 			}
 		}`);	
 
-	if method = 'get' or method = 'delete' ;
-		json_delete ( json_locate(pMethod : 'requestBody')); // get do not have a body
-	endif;
-
 	return pMethod;
 
 end-proc;
 // ------------------------------------------------------------------------------------
 // build the "root" of the response schema 
 // ------------------------------------------------------------------------------------
-dcl-proc setResponseSchema;
+dcl-proc buildResponseSchema;
 
-	dcl-pi *n;
-		pSchemas    pointer value;
+	dcl-pi *n pointer;
 		schemaName  varchar(256) value;
 	end-pi;
 
-	dcl-s pNode	pointer;
+	dcl-s pResponseSchema	pointer;
 	dcl-s ref   varchar(10) inz('$ref');
 
-	schemaName = capitalize (schemaName);
-
-	pNode = json_parseString( `
+	pResponseSchema = json_parseString( `
 	{
 		"type": "object",
 		"properties": {
@@ -1580,8 +1373,7 @@ dcl-proc setResponseSchema;
 		}
 	}`);
 
-
-	json_moveObjectInto  ( pSchemas  :  schemaName + 'Output'  : pNode ); 
+	return pResponseSchema;
 	
 
 end-proc; 
@@ -1682,21 +1474,24 @@ dcl-proc swaggerCommonParmmeters;
 		pMetaParm pointer value;
 	end-pi;
 
-	dcl-s  location char(10);
+	//dcl-s  location char(10);
+//
+	//location = json_getStr(pMetaParm: 'annotations.location');
+//
+	//json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
+	//json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
+	////json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
+	//json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
+	//if 	%subst(location: 1 :4) = 'PATH';
+	//	json_setStr ( pSwaggerParm : 'in'      : 'path');
+	//endif;
+	//
+	//if json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH') > 0;
+	//	json_setInt     ( pSwaggerParm : 'maxLength'   : json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH'));
+	//endif;
 
-	location = json_getStr(pMetaParm: 'annotations.location');
-
-	json_setStr ( pSwaggerParm : 'description' : json_getStr   (pMetaParm : 'parmDescription'));
-	json_setStr ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
-	//json_setStr ( pSwaggerParm : 'format'      : dataFormatJson(pMetaParm ));
-	json_setBool( pSwaggerParm : 'required'    : json_isnull   (pMetaParm : 'DEFAULT') );
-	if 	%subst(location: 1 :4) = 'PATH';
-		json_setStr ( pSwaggerParm : 'in'      : 'path');
-	endif;
-	
-	if json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH') > 0;
-		json_setInt     ( pSwaggerParm : 'maxLength'   : json_getInt (pMetaParm : 'CHARACTER_MAXIMUM_LENGTH'));
-	endif;
+	json_setStr    ( pSwaggerParm : 'type'        : dataTypeJson  (pMetaParm ));
+	json_setInt    ( pSwaggerParm : 'maxLength'   : json_getInt (pMetaParm : 'length'));
 
 end-proc;
 
@@ -1769,10 +1564,7 @@ dcl-proc swaggerParm;
 	dcl-s parmType int(5); 
 	dcl-s name varchar(64);
 	
-	name = snakeToCamelCase(json_getstr (pMetaParm : 'parameter_name') );
-	if name = '';
-		name = 'parm' + json_getstr (pMetaParm : 'ordinal_position'); 
-	endif;
+	name = snakeToCamelCase(json_getstr (pMetaParm : 'name') );
 
 	pParm = json_newObject(); 
 	json_noderename( pParm : name );
@@ -1843,32 +1635,30 @@ dcl-proc dataTypeJson;
 	end-pi;
 
 	dcl-s inputType varchar(64);
-	dcl-s userType varchar(256);
+	//dcl-s userType varchar(256);
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
 
-    userType = json_getstr (pMetaParm : 'data_type_name');
-	inputType = json_getstr (pMetaParm : 'data_type');
+    //userType = json_getstr (pMetaParm : 'data_type_name');
+	inputType = json_getstr (pMetaParm : 'type');
 	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
 
 	select; 
-		when %scan('BOOL' :  userType) > 0;
-			return 'boolean';
+		//when %scan('BOOL' :  userType) > 0;
+		//	return 'boolean';
 
-		when inputType = 'INTEGER' 
-		or   inputType = 'SMALLINT' 
-		or   inputType = 'BIGINT' 
-		or   (inputType = 'DECIMAL' and numericScale =0)
-		or   (inputType = 'NUMERIC' and numericScale =0);
+		when inputType = 'int' 
+		or   (inputType = 'packed' and numericScale =0)
+		or   (inputType = 'zoned'  and numericScale =0);
 			return 'integer';
 
-		when inputType = 'DECIMAL' 
-		or   inputType = 'NUMERIC' 
-		or   inputType = 'DECFLOAT' 
-		or   inputType = 'REAL' 
-		or   inputType = 'FLOAT' 
-		or   inputType = 'DOUBLE'; 
+		when inputType = 'packed' 
+		or   inputType = 'zoned'; 
+		// or   inputType = 'DECFLOAT' // more to come:
+		// or   inputType = 'REAL' // more to come:
+		// or   inputType = 'FLOAT' // more to come:
+		// or   inputType = 'DOUBLE'; // more to come:
 			return 'number';
 
 		other;
@@ -1891,28 +1681,27 @@ dcl-proc dataFormatJson;
 	dcl-s numericScale int (5);
 	dcl-s numericPrecision int (5);
 	 
-	inputType = json_getstr (pMetaParm : 'data_type');
+	inputType = json_getstr (pMetaParm : 'type');
 	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
+	numericPrecision = json_getint (pMetaParm : 'length');
 
 	select; 
-		when   inputType = 'BIGINT' 
-		or    (inputType = 'DECIMAL' and numericScale =0 and numericPrecision > 9)
-		or    (inputType = 'NUMERIC' and numericScale =0 and numericPrecision > 9);
+		when   inputType = 'int' 
+		or    (inputType = 'packed' and numericScale =0 and numericPrecision > 9)
+		or    (inputType = 'zoned' and numericScale =0 and numericPrecision > 9);
 			return 'int64';
  
-		when inputType = 'INTEGER' 
-		or   inputType = 'SMALLINT' 
-		or    (inputType = 'DECIMAL' and numericScale =0 and numericPrecision <= 9)
-		or    (inputType = 'NUMERIC' and numericScale =0 and numericPrecision <= 9);
+		when inputType = 'int' 
+		or    (inputType = 'packed' and numericScale =0 and numericPrecision <= 9)
+		or    (inputType = 'zoned' and numericScale =0 and numericPrecision <= 9);
 			return 'int32';
 
-		when inputType = 'DECIMAL' 
-		or   inputType = 'NUMERIC' 
-		or   inputType = 'DECFLOAT' 
-		or   inputType = 'REAL' 
-		or   inputType = 'FLOAT' 
-		or   inputType = 'DOUBLE'; 
+		when inputType = 'packed' 
+		or   inputType = 'zoned'; 
+		// more to come:: or   inputType = 'DECFLOAT' 
+		// more to come:: or   inputType = 'REAL' 
+		// more to come:: or   inputType = 'FLOAT' 
+		// more to come:: or   inputType = 'DOUBLE'; 
 			return 'double';
 
 		when inputType = 'DATE'; 
@@ -1942,13 +1731,13 @@ dcl-proc dataTypeAsText;
 	dcl-s length int (20);
 
 	 
-	inputType = json_getstr (pMetaParm : 'data_type');
+	inputType = json_getstr (pMetaParm : 'type');
 	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 
-	if json_isnull (pMetaParm : 'numeric_precision');
+	if json_isnull (pMetaParm : 'length');
 		length = json_getint (pMetaParm : 'character_maximum_length');
 	else;
-		length = json_getint (pMetaParm : 'numeric_precision');
+		length = json_getint (pMetaParm : 'length');
 	endif;
 
 
