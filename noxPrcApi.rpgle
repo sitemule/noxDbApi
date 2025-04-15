@@ -647,6 +647,7 @@ dcl-proc buildSwaggerForProcedure;
 	dcl-s RoutineType 	  varchar(10);
 	dcl-s RoutineTypeNc   varchar(10);
 	dcl-s resultSets      int(5);
+    dcl-s usage           varchar(10);
 	dcl-s methods         varchar(256);
 	dcl-s method          varchar(16);
 	dcl-s endpoint        varchar(256);
@@ -659,12 +660,8 @@ dcl-proc buildSwaggerForProcedure;
 	dcl-s pAnnotations    pointer;
 	dcl-s description     varchar(1024);
 	dcl-s pathParms		  int(5);
-	dcl-s i				  int(5);	
-	dcl-s j				  int(5);	
-	dcl-s k				  int(5);	
-
-    dcl-s pServicePgm	    pointer;
-    dcl-s pProcedures       pointer;
+    dcl-s pServicePgm	  pointer;
+    dcl-s pProcedures     pointer;
 
     // Parent of me is "procedures" - Get the parent of that - which is the service program
     pProcedures = json_getParent (pRoutine);
@@ -681,6 +678,7 @@ dcl-proc buildSwaggerForProcedure;
     endpointPath = snakeToCamelCase(service) + '/' + NameCase (procedure);
     endpoint     = snakeToCamelCase(service) + NameCase (procedure);
 
+    // TODO !!! Perhaps the method should be part of the endpoint name?
 	method = 'post';
 
 	schemaInput    = endpoint + NameCase(method) + 'Input'  ;
@@ -716,9 +714,11 @@ dcl-proc buildSwaggerForProcedure;
 
 	iterParms = json_setIterator(pRoutine:'parms');  
 	dow json_ForEach(iterParms) ;  
-		if isInputInThisContext(iterParms.this : iterPathParms.this );
+        usage = json_getStr (pParm:'usage') ;
+	    if  usage = 'input' or usage = 'inputoutput';
 			json_nodeInsert ( pPropertyInput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
-		else;
+		endif;
+	    if  usage = 'inputoutput';
 			json_nodeInsert ( pPropertyOutput  : swaggerParm (iterParms.this)  : JSON_LAST_CHILD); 
 		endif;
 	enddo;
@@ -1562,8 +1562,8 @@ dcl-proc dataTypeJson;
 
     //userType = json_getstr (pMetaParm : 'data_type_name');
 	inputType = json_getstr (pMetaParm : 'type');
-	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'numeric_precision');
+	numericScale = json_getint (pMetaParm : 'length'); // Decimals after 
+	numericPrecision = json_getint (pMetaParm : 'precision');
 
 	select; 
 		//when %scan('BOOL' :  userType) > 0;
@@ -1603,18 +1603,18 @@ dcl-proc dataFormatJson;
 	dcl-s numericPrecision int (5);
 	 
 	inputType = json_getstr (pMetaParm : 'type');
-	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
-	numericPrecision = json_getint (pMetaParm : 'length');
+	numericScale = json_getint (pMetaParm : 'length');  
+	numericPrecision = json_getint (pMetaParm : 'precision'); // Decimals after
 
 	select; 
 		when   inputType = 'int' 
-		or    (inputType = 'packed' and numericScale =0 and numericPrecision > 9)
-		or    (inputType = 'zoned' and numericScale =0 and numericPrecision > 9);
+		or    (inputType = 'packed' and numericPrecision  =0 and numericScale  > 9)
+		or    (inputType = 'zoned' and numericPrecision  =0 and numericScale  > 9);
 			return 'int64';
  
 		when inputType = 'int' 
-		or    (inputType = 'packed' and numericScale =0 and numericPrecision <= 9)
-		or    (inputType = 'zoned' and numericScale =0 and numericPrecision <= 9);
+		or    (inputType = 'packed' and numericPrecision  =0 and numericScale  <= 9)
+		or    (inputType = 'zoned' and numericPrecision  =0 and numericScale  <= 9);
 			return 'int32';
 
 		when inputType = 'packed' 
@@ -1648,12 +1648,12 @@ dcl-proc dataTypeAsText;
 
 	dcl-s inputType varchar(64);
 	dcl-s formatString varchar(64);
-	dcl-s numericScale int (5);
+	dcl-s numericPresision  int (5);
 	dcl-s length int (20);
 
 	 
 	inputType = json_getstr (pMetaParm : 'type');
-	numericScale = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
+	numericPresision  = json_getint (pMetaParm : 'numeric_scale'); // Decimals after 
 
 	if json_isnull (pMetaParm : 'length');
 		length = json_getint (pMetaParm : 'character_maximum_length');
@@ -1663,8 +1663,8 @@ dcl-proc dataTypeAsText;
 
 
 	formatString =  strLower(inputType + '(' + %char(length));
-	if numericScale > 0; 
-		formatString += ',' + %char(numericScale);
+	if numericPresision  > 0; 
+		formatString += ',' + %char(numericPresision );
 	endif;
 	formatString += ')';
 	return formatString;
