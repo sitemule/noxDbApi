@@ -52,9 +52,10 @@ ctl-opt bndDir('NOXDB':'ICEUTILITY');
 // --------------------------------------------------------------------
 dcl-proc main;
 
-	dcl-s url  			varchar(256);
+	dcl-s url  			varchar(32000);
 	dcl-s environment   varchar(64);
 	dcl-s schemaName    varchar(64);
+	dcl-s serviceName   varchar(64);
 	dcl-s procName 		varchar(128);
  	
 	if getServerVar('REQUEST_METHOD') = 'OPTIONS';
@@ -65,7 +66,8 @@ dcl-proc main;
 	url = getServerVar('REQUEST_FULL_PATH');
 	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
-	procName    = word (url:3:'/');		
+	serviceName = word (url:3:'/');		
+	procName    = word (url:4:'/');		
 
 	if  schemaName = 'openapi-meta';
 		// The envvar is set in the "webconfig.xml" file. The "envvar" tag
@@ -79,9 +81,6 @@ dcl-proc main;
 		serveStatic (environment : schemaName : url);
 	else;
 		serveProcedureResponse (
-			environment : 
-			schemaName : 
-			procName : 
 			url : 
 			getenvvar('NOXDBAPI_EXPOSE_SCHEMAS') : 
 			getenvvar('NOXDBAPI_EXPOSE_ROUTINES'):
@@ -97,7 +96,7 @@ dcl-proc serveStatic;
 	dcl-pi *n;
 		environment varchar(64);
 		schemaName varchar(64);
-		url varchar(256);
+		url varchar(32000);
 	end-pi;
 
 	dcl-s i	int(10);
@@ -135,10 +134,7 @@ end-proc;
 dcl-proc serveProcedureResponse ;	
 
 	dcl-pi *n;
-		environment     varchar(64);
-		schema          varchar(64);
-		procName        varchar(128);
-		url             varchar(256);
+		url             varchar(32000);
 		exposeSchemas   varchar(256) const options(*varsize);
 		exposeRoutines  varchar(256) const options(*varsize);
 		exposeViews     varchar(256) const options(*varsize);
@@ -164,18 +160,29 @@ dcl-proc serveProcedureResponse ;
 	dcl-ds iterParms  	likeds(json_iterator);
 	dcl-ds iterList  	likeds(json_iterator);  
 	
+
+    dcl-s environment   varchar(64);
+	dcl-s schemaName    varchar(64);
+	dcl-s serviceName   varchar(64);
+	dcl-s procName 		varchar(128);
+ 	
+	environment = strLower(word (url:1:'/'));
+	schemaName  = word (url:2:'/');
+	serviceName = word (url:3:'/');		
+	procName    = word (url:4:'/');		
+
 	SetContentType ('application/json;charset=UTF-8');
 
-	if schema <= '';
+	if schemaName <= '' or serviceName <= '' or procName <= '';
 		pResponse = FormatError (
-			'Need schema and procedure'
+			'Need schema, service and procedure'
 		);
 		return;
 	endif;
 
-	if wordIxNoCase (exposeSchemas : schema :',') <= 0;
+	if wordIxNoCase (exposeSchemas : schemaName :',') <= 0;
 		pResponse = FormatError (
-			'Invalid schema ' + schema
+			'Invalid schema ' + schemaName
 		);
 		return;
 	endif;
@@ -201,109 +208,23 @@ dcl-proc serveProcedureResponse ;
 		getQryStrList ( name : value : '*NEXT');
 	enddo;
 
-	// First - do we have is as a view? 
-	if exposeViews = 'ANNOTATED';
-		viewName = getViewByAnnotations ( schema : procName) ;
-	else; 
-		viewName = '';
-	endif;
+    // TODO Perhaps "methos" could be part of procedure sufix? 
+	method = getServerVar('REQUEST_METHOD');
 
+    pResponse = json_CallProcedure  (
+        strUpper (schemaName) : 
+        strUpper (serviceName): 
+        strUpper (procName): 
+        pPayload: 
+        JSON_GRACEFUL_ERROR
+    );
 
-	// First - do we have is as a view? 
-	if viewName > ''; 
+    If json_Error(pResponse) ;
+        msg = json_Message(pResponse);
+		pResponse = FormatError(msg);
+		return;
+    EndIf;
 
-		
-		sep = ' where ';
-		for parmNum = 1 to 10;
-			pathParm = word ( url: parmNum + 3: '/'); // TODO !! now  path parms start after the endpoint ( word 4 ..) , that will change!!
-			if pathParm = '';
-				leave;
-			endif;
-			where  += sep + getViewParmName ( schema : viewName : parmNum)
-					+ ' = ' + strQuot(urlDecode(pathParm));
-			sep = ' and ';
-		endfor;
-
-		method = getServerVar('REQUEST_METHOD');
-		select;
-			when method = 'GET';
-				sqlStmt = 'select * from ' +  schema + '.' + viewName + where;
-				pResponse = json_sqlResultSet (
-					sqlStmt:
-					1:            // Starting from row. TODO Paging 
-					JSON_ALLROWS: // Number of rows to read. TODO Paging
-					JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR
-				); 
-				return;
-			when method = 'PUT' and where > '';
-				err = json_sqlUpdate (
-					schema + '.' + viewName:
-					pPayload:
-					where
-				);
-				if err;
-					pResponse = FormatError('Update error');
-				else;
-					pResponse = successTrue ();
-				endif;
-				return;
-			when method = 'POST';
-				err = json_sqlInsert (
-					schema + '.' + viewName:
-					pPayload
-				);
-				if err;
-					pResponse = FormatError('Insert error');
-				else;
-					pResponse = successTrue ();
-				endif;
-				return;
-			when method = 'DELETE' and where > '';
-				err = json_sqlExec  (
-					'delete from ' + schema + '.' + viewName + where
-				);
-				if err;
-					pResponse = FormatError('Delete error');
-				else;
-					pResponse = successTrue ();
-				endif;
-				return;
-		endsl; 
-
-	endif;
-
-	// path parameters given? find the name and add to the payload:
-	if exposeRoutines = 'ANNOTATED';
-		for parmNum = 1 to 10;
-			pathParm = word ( url: parmNum + 3: '/'); // TODO !! now  path parms start after the endpoint ( word 4 ..) , that will change!!
-			if pathParm = '';
-				leave;
-			endif;
-			json_setValue (pPayload : getProcParmName ( schema : procName : parmNum) : pathParm );
-		endfor;
-	endif;	
-
-	if exposeRoutines = 'ANNOTATED';
-		specificName = getSpecificNameByAnnotations ( schema : procName) ;
-	else;
-		specificName = getSpecificName ( schema : procName) ;
-	endif;
-
-	pResponse = json_sqlExecuteRoutine (
-		specificName : 
-		pPayload : 
-		JSON_META + JSON_CAMEL_CASE + JSON_GRACEFUL_ERROR:
-		*ON // Specific 
-	);
-
-	// The result will be in snake ( as is). JSON is typically Cammel 
-	// json_sqlExecuteRoutine is not supporting the JSON_CAMEL_CASE ( yet)  
-	/* 	
-	iterList = json_setIterator(pResponse);  
-	dow json_ForEach(iterList) ;  
-		json_noderename (iterList.this : snakeToCamelCase ( json_getname (iterList.this) ));
-	enddo; 
-	*/ 
 
 	return;
 
