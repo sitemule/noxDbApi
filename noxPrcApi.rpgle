@@ -1,4 +1,4 @@
-<%@ free="*YES" language="SQLRPGLE" owner="QPGMR"%>
+<%@ free="*YES" language="RPGLE" owner="QPGMR"%>
 <%
 ctl-opt copyright('System & Method (C), 2019-2025');
 ctl-opt decEdit('0,') datEdit(*YMD.) main(main); 
@@ -165,6 +165,9 @@ dcl-proc serveProcedureResponse ;
 	dcl-s schemaName    varchar(64);
 	dcl-s serviceName   varchar(64);
 	dcl-s procName 		varchar(128);
+    dcl-s errText  		char(128);
+	dcl-s errPgm   		char(64);
+	dcl-s errList 		char(4096);
  	
 	environment = strLower(word (url:1:'/'));
 	schemaName  = word (url:2:'/');
@@ -211,13 +214,23 @@ dcl-proc serveProcedureResponse ;
     // TODO Perhaps "methos" could be part of procedure sufix? 
 	method = getServerVar('REQUEST_METHOD');
 
-    pResponse = json_CallProcedure  (
-        strUpper (schemaName) : 
-        strUpper (serviceName): 
-        strUpper (procName): 
-        pPayload: 
-        JSON_GRACEFUL_ERROR
-    );
+    monitor;
+
+        pResponse = json_CallProcedure  (
+            strUpper (schemaName) : 
+            strUpper (serviceName): 
+            strUpper (procName): 
+            pPayload: 
+            JSON_GRACEFUL_ERROR
+        );
+
+	on-error;                                     
+			soap_Fault(errText:errPgm:errList);    
+			pResponse =  FormatError (
+				'Error in service ' + serviceName + '.' + procName + ' : ' + errText
+			);
+            return;
+	endmon;     
 
     If json_Error(pResponse) ;
         msg = json_Message(pResponse);
@@ -252,196 +265,6 @@ on-exit;
 
 end-proc;
 
-// ------------------------------------------------------------------------------------
-// get Specific Name by filter the name 
-// ------------------------------------------------------------------------------------
-dcl-proc getSpecificName;
-
-	dcl-pi *n varchar(128);
-		schema  varchar(64) value ;
-		routine varchar(128) value ;
-	end-pi;
-
-	dcl-s functionType 	char(1);	
-	dcl-s routineType 	char(10);	
-	dcl-s specificName  varchar(128);
-
- 	routine = strUpper(camelToSnakeCase (routine));
-	schema  = strUpper(camelToSnakeCase (schema));
-
-	if %subst(routine: %len(routine) - 4) = 'TABLE';
-		functionType  = 'T';
-		routineType  = 'FUNCTION';
-		routine = %subst ( routine : 1: %len(routine) - 6);
-	elseif %subst(routine: %len(routine) - 5) = 'SCALAR';
-		functionType  = 'S';
-		routineType  = 'FUNCTION';
-		routine = %subst ( routine : 1: %len(routine) - 7);
-	elseif %subst(routine: %len(routine) - 8) = 'PROCEDURE';
-		functionType  = ' ';
-		routine = %subst ( routine : 1: %len(routine) - 10);
-		routineType  = 'PROCEDURE';
-	else; 
-		functionType  = '?';
-		routine = '????';
-	endif;
-
-	exec sql 
-		select specific_name  
-		into   :specificName
-		from   qsys2.sysroutines
-		where  service_schema = :schema 
-		and routine_type      = :routineType 
-		and    service_name   = :routine
-		and    function_type  = :functionType;
-
-
-	return schema + '.' + specificName;
-end-proc;
-	
-// ------------------------------------------------------------------------------------
-// get Specific Name by annotations 
-// ------------------------------------------------------------------------------------
-dcl-proc getSpecificNameByAnnotations;
-
-	dcl-pi *n varchar(128);
-		schema  varchar(64) value ;
-		routine varchar(128) value ;
-	end-pi;
-
-	dcl-s functionType 	char(1);	
-	dcl-s routineType 	char(10);	
-	dcl-s method  	    varchar(10);	
-	dcl-s specificName  varchar(128);
-
-	method = getServerVar('REQUEST_METHOD');
-	schema = strUpper(camelToSnakeCase (schema));
-
-	// Note: to make the endpoint unique:
-	// 1) a blank has to follow the method name 
-	// 2) The endpoint name has to terminate the textstring 
-	exec sql 
-		select specific_name  
-		into   :specificName
-		from   qsys2.sysroutines
-		where  service_schema = :schema 
-		and  ( long_comment not like '%@Method=%'   
-		  or   long_comment like '%@Method=' || :method || '%')
-		and  ( long_comment like '%@Endpoint=' || :routine  || ' %'
-		  or   long_comment like '%@Endpoint=' || :routine  );
-
-	return schema + '.' + specificName;
-end-proc;
-// ------------------------------------------------------------------------------------
-// get name of the view by the anotation in systables  
-// ------------------------------------------------------------------------------------
-dcl-proc getViewByAnnotations;
-
-	dcl-pi *n varchar(128);
-		schema  varchar(64) value ;
-		routine varchar(128) value ;
-	end-pi;
-
-	dcl-s functionType 	char(1);	
-	dcl-s routineType 	char(10);	
-	dcl-s method  	    varchar(10);	
-	dcl-s viewName      varchar(128);
-
-	method = getServerVar('REQUEST_METHOD');
-	schema = strUpper(camelToSnakeCase (schema));
-
-	// Note: to make the endpoint unique:
-	// 1) a blank has to follow the method name 
-	// 2) The endpoint name has to terminate the textstring 
-	exec sql 
-		select table_name 
-		into   :viewName
-		from qsys2.systables 
-		where table_schema = :schema 
-		and    ( long_comment like '%@Endpoint=' || :routine  || ' %'
-		  or     long_comment like '%@Endpoint=' || :routine  );
-
-	return %trimr(viewName);
-end-proc;
-// ------------------------------------------------------------------------------------
-// get parameter name from a specific routing name by annotations 
-// ------------------------------------------------------------------------------------
-dcl-proc getProcParmName;
-
-	dcl-pi *n varchar(128);
-		schema  varchar(64) value ;
-		routine varchar(128) value ;
-		parmNumber  int(5) value;
-	end-pi;
-
-	dcl-s functionType 	char(1);	
-	dcl-s routineType 	char(10);	
-	dcl-s method  	    varchar(10);	
-	dcl-s specificName  varchar(128);
-	dcl-s parameterName varchar(128);
-	dcl-s parmNumber_   varchar(3);
-
-	method = getServerVar('REQUEST_METHOD');
-	schema  = strUpper(camelToSnakeCase (schema));
-	parmNumber_ = %char(parmNumber);
-
-	// Note: to make the endpoint unique:
-	// 1) a blank has to follow the method name 
-	// 2) The endpoint name has to terminate the textstring 
-	exec sql
-		select parameter_name 
-		into   :parameterName
-		from   qsys2.sysroutines r
-		join sysparms p 
-			on (r.specific_schema , r.specific_name ) = (p.specific_schema ,p.specific_name)
-		where  r.specific_schema = :schema 
-		and  ( r.long_comment not like '%@Method=' 
-			or r.long_comment like '%@Method=' || :method || '%') 
-		and  ( r.long_comment like '%@Endpoint=' || :routine  || ' %'
-		  or   r.long_comment like '%@Endpoint=' || :routine  )
-        and    p.long_comment like '%@Location=PATH,' || :parmNumber_ || '%';
-//        order by ordinal_position
-//        limit 1 offset :parmNumber - 1; // Offset starts at 0 and we ask for parameter number starting at 1 
-
-
-	return snakeToCamelCase (parameterName);
-end-proc;
-// ------------------------------------------------------------------------------------
-// get parameter name from a specific routing name by annotations 
-// ------------------------------------------------------------------------------------
-dcl-proc getViewParmName;
-
-	dcl-pi *n varchar(128);
-		schema     varchar(64) value ;
-		viewName   varchar(128) value ;
-		parmNumber int(5) value;
-	end-pi;
-
-	dcl-s functionType 	char(1);	
-	dcl-s routineType 	char(10);	
-	//dcl-s method  	    varchar(10);	
-	dcl-s specificName  varchar(128);
-	dcl-s parameterName varchar(128);
-	dcl-s parmNumber_   varchar(3);
-
-	//method = getServerVar('REQUEST_METHOD');
-	schema  = strUpper(camelToSnakeCase (schema));
-	parmNumber_ = %char(parmNumber);
-
-	// Note: to make the endpoint unique:
-	// 1) a blank has to follow the method name 
-	// 2) The endpoint name has to terminate the textstring 
-	exec sql
-		select column_name
-		into   :parameterName
-		from   qsys2.syscolumns 
-		where  table_schema = :schema  
-		and    table_name = :viewName
-        and    long_comment like '%@Location=PATH,' || :parmNumber_ || '%';
-
-	// return snakeToCamelCase (parameterName);
-	return parameterName;
-end-proc;
 /* -------------------------------------------------------------------- *\ 
    JSON error monitor 
 \* -------------------------------------------------------------------- */

@@ -68,7 +68,8 @@ end-proc;
 dcl-proc alltypes export;
 
     dcl-pi alltypes ;
-        char    char (10);
+        char     char (10);
+//        varchar  varchar (10);
         int8     int(20);
         int4     int(10);
 //        int2     int(3);
@@ -85,14 +86,15 @@ dcl-proc alltypes export;
 
 
     char    = 'xyz';
+//    varchar = 'abcdefghij';
     int8     = -456789012345;
     int4     = -56789;
 //    int2     = -127;
     uns8     = 456789012345;
     uns4     = 56789;
     uns2     = 255;
-    packed  = 987.65;
-    zoned   = 8765.43;
+    packed  = -987.65;
+    zoned   = -8765.43;
     ind     = *OFF;
     date    = %date();
     time    = %time();

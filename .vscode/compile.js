@@ -20,8 +20,6 @@ var purl  = "userFile=" + userFile + "&format=" + format + "&source=" + sourceFi
 var serverid   =  '&server=' + opt.id;
 var n= host + purl + serverid;
 
-console.log ("Submitting file " + file + " to " + n); 
-
 var p = http.get(n, function(response) {
     response.on('data', function(d) {
         process.stdout.write(d);
